@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
@@ -46,8 +47,13 @@ func (srv *fakeAPISIXPluginSrv) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	fakePluginsResp := make(map[string]interface{}, len(srv.plugins))
+	for _, fp := range srv.plugins {
+		fakePluginsResp[fp] = struct{}{}
+	}
+
 	if r.Method == http.MethodGet {
-		data, _ := json.Marshal(srv.plugins)
+		data, _ := json.Marshal(fakePluginsResp)
 		_, _ = w.Write(data)
 		w.WriteHeader(http.StatusOK)
 		return
@@ -90,17 +96,20 @@ func TestPluginClient(t *testing.T) {
 	closedCh := make(chan struct{})
 	close(closedCh)
 	cli := newPluginClient(&cluster{
-		baseURL:          u.String(),
-		cli:              http.DefaultClient,
-		cache:            &dummyCache{},
-		cacheSynced:      closedCh,
-		metricsCollector: metrics.NewPrometheusCollector(),
+		baseURL:           u.String(),
+		cli:               http.DefaultClient,
+		cache:             &dummyCache{},
+		generatedObjCache: &dummyCache{},
+		cacheSynced:       closedCh,
+		metricsCollector:  metrics.NewPrometheusCollector(),
 	})
 
 	// List
 	objs, err := cli.List(context.Background())
 	assert.Nil(t, err)
 	assert.Len(t, objs, len(fakePluginNames))
+	sort.Strings(fakePluginNames)
+	sort.Strings(objs)
 	for i := range fakePluginNames {
 		assert.Equal(t, fakePluginNames[i], objs[i])
 	}

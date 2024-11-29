@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,9 +18,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/apache/apisix-ingress-controller/pkg/types"
 )
 
 const (
@@ -54,6 +57,10 @@ const (
 	SchemeHTTPS = "https"
 	// SchemeGRPCS represents the GRPCS protocol.
 	SchemeGRPCS = "grpcs"
+	// SchemeTCP represents the TCP protocol.
+	SchemeTCP = "tcp"
+	// SchemeUDP represents the UDP protocol.
+	SchemeUDP = "udp"
 
 	// HealthCheckHTTP represents the HTTP kind health check.
 	HealthCheckHTTP = "http"
@@ -72,7 +79,21 @@ const (
 	// DefaultUpstreamTimeout represents the default connect,
 	// read and send timeout (in seconds) with upstreams.
 	DefaultUpstreamTimeout = 60
+
+	// PassHostPass represents pass option for pass_host Upstream settings.
+	PassHostPass = "pass"
+	// PassHostPass represents node option for pass_host Upstream settings.
+	PassHostNode = "node"
+	// PassHostPass represents rewrite option for pass_host Upstream settings.
+	PassHostRewrite = "rewrite"
 )
+
+var ValidSchemes map[string]struct{} = map[string]struct{}{
+	SchemeHTTP:  {},
+	SchemeHTTPS: {},
+	SchemeGRPC:  {},
+	SchemeGRPCS: {},
+}
 
 // Metadata contains all meta information about resources.
 // +k8s:deepcopy-gen=true
@@ -100,6 +121,8 @@ type Route struct {
 	RemoteAddrs     []string         `json:"remote_addrs,omitempty" yaml:"remote_addrs,omitempty"`
 	UpstreamId      string           `json:"upstream_id,omitempty" yaml:"upstream_id,omitempty"`
 	Plugins         Plugins          `json:"plugins,omitempty" yaml:"plugins,omitempty"`
+	PluginConfigId  string           `json:"plugin_config_id,omitempty" yaml:"plugin_config_id,omitempty"`
+	FilterFunc      string           `json:"filter_func,omitempty" yaml:"filter_func,omitempty"`
 }
 
 // Vars represents the route match expressions of APISIX.
@@ -180,15 +203,22 @@ func (p *Plugins) DeepCopy() *Plugins {
 type Upstream struct {
 	Metadata `json:",inline" yaml:",inline"`
 
-	Type    string               `json:"type,omitempty" yaml:"type,omitempty"`
-	HashOn  string               `json:"hash_on,omitempty" yaml:"hash_on,omitempty"`
-	Key     string               `json:"key,omitempty" yaml:"key,omitempty"`
-	Checks  *UpstreamHealthCheck `json:"checks,omitempty" yaml:"checks,omitempty"`
-	Nodes   UpstreamNodes        `json:"nodes" yaml:"nodes"`
-	Scheme  string               `json:"scheme,omitempty" yaml:"scheme,omitempty"`
-	Retries *int                 `json:"retries,omitempty" yaml:"retries,omitempty"`
-	Timeout *UpstreamTimeout     `json:"timeout,omitempty" yaml:"timeout,omitempty"`
-	TLS     *ClientTLS           `json:"tls,omitempty" yaml:"tls,omitempty"`
+	Type         string               `json:"type,omitempty" yaml:"type,omitempty"`
+	HashOn       string               `json:"hash_on,omitempty" yaml:"hash_on,omitempty"`
+	Key          string               `json:"key,omitempty" yaml:"key,omitempty"`
+	Checks       *UpstreamHealthCheck `json:"checks,omitempty" yaml:"checks,omitempty"`
+	Nodes        UpstreamNodes        `json:"nodes" yaml:"nodes"`
+	Scheme       string               `json:"scheme,omitempty" yaml:"scheme,omitempty"`
+	Retries      *int                 `json:"retries,omitempty" yaml:"retries,omitempty"`
+	Timeout      *UpstreamTimeout     `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	TLS          *ClientTLS           `json:"tls,omitempty" yaml:"tls,omitempty"`
+	PassHost     string               `json:"pass_host,omitempty" yaml:"pass_host,omitempty"`
+	UpstreamHost string               `json:"upstream_host,omitempty" yaml:"upstream_host,omitempty"`
+
+	// for Service Discovery
+	ServiceName   string            `json:"service_name,omitempty" yaml:"service_name,omitempty"`
+	DiscoveryType string            `json:"discovery_type,omitempty" yaml:"discovery_type,omitempty"`
+	DiscoveryArgs map[string]string `json:"discovery_args,omitempty" yaml:"discovery_args,omitempty"`
 }
 
 // ClientTLS is tls cert and key use in mTLS
@@ -215,19 +245,138 @@ type UpstreamNodes []UpstreamNode
 // and by default empty array will be encoded as '{}'.
 // We have to maintain the compatibility.
 func (n *UpstreamNodes) UnmarshalJSON(p []byte) error {
+	var data []UpstreamNode
 	if p[0] == '{' {
-		if len(p) != 2 {
-			return errors.New("unexpected non-empty object")
+		value := map[string]float64{}
+		if err := json.Unmarshal(p, &value); err != nil {
+			return err
 		}
-		*n = UpstreamNodes{}
+		for k, v := range value {
+			node, err := mapKV2Node(k, v)
+			if err != nil {
+				return err
+			}
+			data = append(data, *node)
+		}
+		*n = data
 		return nil
 	}
-	var data []UpstreamNode
 	if err := json.Unmarshal(p, &data); err != nil {
 		return err
 	}
 	*n = data
 	return nil
+}
+
+// MarshalJSON is used to implement custom json.MarshalJSON
+func (up Upstream) MarshalJSON() ([]byte, error) {
+
+	if up.DiscoveryType != "" {
+		return json.Marshal(&struct {
+			Metadata `json:",inline" yaml:",inline"`
+
+			Type   string               `json:"type,omitempty" yaml:"type,omitempty"`
+			HashOn string               `json:"hash_on,omitempty" yaml:"hash_on,omitempty"`
+			Key    string               `json:"key,omitempty" yaml:"key,omitempty"`
+			Checks *UpstreamHealthCheck `json:"checks,omitempty" yaml:"checks,omitempty"`
+			//Nodes   UpstreamNodes        `json:"nodes" yaml:"nodes"`
+			Scheme       string           `json:"scheme,omitempty" yaml:"scheme,omitempty"`
+			Retries      *int             `json:"retries,omitempty" yaml:"retries,omitempty"`
+			Timeout      *UpstreamTimeout `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+			HostPass     string           `json:"pass_host,omitempty" yaml:"pass_host,omitempty"`
+			UpstreamHost string           `json:"upstream_host,omitempty" yaml:"upstream_host,omitempty"`
+			TLS          *ClientTLS       `json:"tls,omitempty" yaml:"tls,omitempty"`
+
+			// for Service Discovery
+			ServiceName   string            `json:"service_name,omitempty" yaml:"service_name,omitempty"`
+			DiscoveryType string            `json:"discovery_type,omitempty" yaml:"discovery_type,omitempty"`
+			DiscoveryArgs map[string]string `json:"discovery_args,omitempty" yaml:"discovery_args,omitempty"`
+		}{
+			Metadata: up.Metadata,
+
+			Type:   up.Type,
+			HashOn: up.HashOn,
+			Key:    up.Key,
+			Checks: up.Checks,
+			//Nodes:   up.Nodes,
+			Scheme:       up.Scheme,
+			Retries:      up.Retries,
+			Timeout:      up.Timeout,
+			HostPass:     up.PassHost,
+			UpstreamHost: up.UpstreamHost,
+			TLS:          up.TLS,
+
+			ServiceName:   up.ServiceName,
+			DiscoveryType: up.DiscoveryType,
+			DiscoveryArgs: up.DiscoveryArgs,
+		})
+	} else {
+		return json.Marshal(&struct {
+			Metadata `json:",inline" yaml:",inline"`
+
+			Type         string               `json:"type,omitempty" yaml:"type,omitempty"`
+			HashOn       string               `json:"hash_on,omitempty" yaml:"hash_on,omitempty"`
+			Key          string               `json:"key,omitempty" yaml:"key,omitempty"`
+			Checks       *UpstreamHealthCheck `json:"checks,omitempty" yaml:"checks,omitempty"`
+			Nodes        UpstreamNodes        `json:"nodes" yaml:"nodes"`
+			Scheme       string               `json:"scheme,omitempty" yaml:"scheme,omitempty"`
+			Retries      *int                 `json:"retries,omitempty" yaml:"retries,omitempty"`
+			Timeout      *UpstreamTimeout     `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+			HostPass     string               `json:"pass_host,omitempty" yaml:"pass_host,omitempty"`
+			UpstreamHost string               `json:"upstream_host,omitempty" yaml:"upstream_host,omitempty"`
+			TLS          *ClientTLS           `json:"tls,omitempty" yaml:"tls,omitempty"`
+
+			// for Service Discovery
+			//ServiceName   string            `json:"service_name,omitempty" yaml:"service_name,omitempty"`
+			//DiscoveryType string            `json:"discovery_type,omitempty" yaml:"discovery_type,omitempty"`
+			//DiscoveryArgs map[string]string `json:"discovery_args,omitempty" yaml:"discovery_args,omitempty"`
+		}{
+			Metadata: up.Metadata,
+
+			Type:         up.Type,
+			HashOn:       up.HashOn,
+			Key:          up.Key,
+			Checks:       up.Checks,
+			Nodes:        up.Nodes,
+			Scheme:       up.Scheme,
+			Retries:      up.Retries,
+			Timeout:      up.Timeout,
+			HostPass:     up.PassHost,
+			UpstreamHost: up.UpstreamHost,
+			TLS:          up.TLS,
+
+			//ServiceName:   up.ServiceName,
+			//DiscoveryType: up.DiscoveryType,
+			//DiscoveryArgs: up.DiscoveryArgs,
+		})
+	}
+
+}
+
+func mapKV2Node(key string, val float64) (*UpstreamNode, error) {
+	hp := strings.Split(key, ":")
+	host := hp[0]
+	//  according to APISIX upstream nodes policy, port is required
+	port := "80"
+
+	if len(hp) > 2 {
+		return nil, errors.New("invalid upstream node")
+	} else if len(hp) == 2 {
+		port = hp[1]
+	}
+
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, fmt.Errorf("parse port to int fail: %s", err.Error())
+	}
+
+	node := &UpstreamNode{
+		Host:   host,
+		Port:   portInt,
+		Weight: int(val),
+	}
+
+	return node, nil
 }
 
 // UpstreamNode is the node in upstream
@@ -321,8 +470,9 @@ type Ssl struct {
 // MutualTLSClientConfig apisix SSL client field
 // +k8s:deepcopy-gen=true
 type MutualTLSClientConfig struct {
-	CA    string `json:"ca,omitempty" yaml:"ca,omitempty"`
-	Depth int    `json:"depth,omitempty" yaml:"depth,omitempty"`
+	CA               string   `json:"ca,omitempty" yaml:"ca,omitempty"`
+	Depth            int      `json:"depth,omitempty" yaml:"depth,omitempty"`
+	SkipMTLSUriRegex []string `json:"skip_mtls_uri_regex,omitempty" yaml:"skip_mtls_uri_regex, omitempty"`
 }
 
 // StreamRoute represents the stream_route object in APISIX.
@@ -333,15 +483,17 @@ type StreamRoute struct {
 	Desc       string            `json:"desc,omitempty" yaml:"desc,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
 	ServerPort int32             `json:"server_port,omitempty" yaml:"server_port,omitempty"`
+	SNI        string            `json:"sni,omitempty" yaml:"sni,omitempty"`
 	UpstreamId string            `json:"upstream_id,omitempty" yaml:"upstream_id,omitempty"`
 	Upstream   *Upstream         `json:"upstream,omitempty" yaml:"upstream,omitempty"`
+	Plugins    Plugins           `json:"plugins,omitempty" yaml:"plugins,omitempty"`
 }
 
 // GlobalRule represents the global_rule object in APISIX.
 // +k8s:deepcopy-gen=true
 type GlobalRule struct {
-	ID      string  `json:"id,omitempty" yaml:"id,omitempty"`
-	Plugins Plugins `json:"plugins,omitempty" yaml:"plugins,omitempty"`
+	ID      string  `json:"id" yaml:"id"`
+	Plugins Plugins `json:"plugins" yaml:"plugins"`
 }
 
 // Consumer represents the consumer object in APISIX.
@@ -357,7 +509,19 @@ type Consumer struct {
 // +k8s:deepcopy-gen=true
 type PluginConfig struct {
 	Metadata `json:",inline" yaml:",inline"`
-	Plugins  Plugins `json:"plugins,omitempty" yaml:"plugins,omitempty"`
+	Plugins  Plugins `json:"plugins" yaml:"plugins"`
+}
+
+type PluginMetadata struct {
+	Name     string
+	Metadata map[string]any
+}
+
+// UpstreamServiceRelation Upstream association object
+// +k8s:deepcopy-gen=true
+type UpstreamServiceRelation struct {
+	ServiceName   string              `json:"service_name" yaml:"service_name"`
+	UpstreamNames map[string]struct{} `json:"upstream_name,omitempty" yaml:"upstream_name,omitempty"`
 }
 
 // NewDefaultUpstream returns an empty Upstream with default values.
@@ -408,19 +572,43 @@ func NewDefaultConsumer() *Consumer {
 	}
 }
 
-// ComposeUpstreamName uses namespace, name, subset (optional) and port info to compose
+// NewDefaultPluginConfig returns an empty PluginConfig with default values.
+func NewDefaultPluginConfig() *PluginConfig {
+	return &PluginConfig{
+		Metadata: Metadata{
+			Desc: "Created by apisix-ingress-controller, DO NOT modify it manually",
+			Labels: map[string]string{
+				"managed-by": "apisix-ingress-controller",
+			},
+		},
+		Plugins: make(Plugins),
+	}
+}
+
+// NewDefaultGlobalRule returns an empty PluginConfig with default values.
+func NewDefaultGlobalRule() *GlobalRule {
+	return &GlobalRule{
+		Plugins: make(Plugins),
+	}
+}
+
+// ComposeUpstreamName uses namespace, name, subset (optional), port, resolveGranularity info to compose
 // the upstream name.
-func ComposeUpstreamName(namespace, name, subset string, port int32) string {
+// the resolveGranularity is not composited in the upstream name when it is endpoint.
+func ComposeUpstreamName(namespace, name, subset string, port int32, resolveGranularity string) string {
 	pstr := strconv.Itoa(int(port))
 	// FIXME Use sync.Pool to reuse this buffer if the upstream
 	// name composing code path is hot.
 	var p []byte
-	if subset == "" {
-		p = make([]byte, 0, len(namespace)+len(name)+len(pstr)+2)
-	} else {
-		p = make([]byte, 0, len(namespace)+len(name)+len(subset)+len(pstr)+3)
+	plen := len(namespace) + len(name) + len(pstr) + 2
+	if subset != "" {
+		plen = plen + len(subset) + 1
+	}
+	if resolveGranularity == types.ResolveGranularity.Service {
+		plen = plen + len(resolveGranularity) + 1
 	}
 
+	p = make([]byte, 0, plen)
 	buf := bytes.NewBuffer(p)
 	buf.WriteString(namespace)
 	buf.WriteByte('_')
@@ -431,8 +619,17 @@ func ComposeUpstreamName(namespace, name, subset string, port int32) string {
 		buf.WriteByte('_')
 	}
 	buf.WriteString(pstr)
+	if resolveGranularity == types.ResolveGranularity.Service {
+		buf.WriteByte('_')
+		buf.WriteString(resolveGranularity)
+	}
 
 	return buf.String()
+}
+
+// ComposeExternalUpstreamName uses ApisixUpstream namespace, name to compose the upstream name.
+func ComposeExternalUpstreamName(namespace, name string) string {
+	return namespace + "_" + name
 }
 
 // ComposeRouteName uses namespace, name and rule name to compose
@@ -479,6 +676,36 @@ func ComposeConsumerName(namespace, name string) string {
 	// TODO If APISIX modifies the consumer name schema, we can drop this.
 	buf.WriteString(strings.Replace(namespace, "-", "_", -1))
 	buf.WriteString("_")
+	buf.WriteString(strings.Replace(name, "-", "_", -1))
+
+	return buf.String()
+}
+
+// ComposePluginConfigName uses namespace, name to compose
+// the plugin_config name.
+func ComposePluginConfigName(namespace, name string) string {
+	// FIXME Use sync.Pool to reuse this buffer if the upstream
+	// name composing code path is hot.
+	p := make([]byte, 0, len(namespace)+len(name)+1)
+	buf := bytes.NewBuffer(p)
+
+	buf.WriteString(namespace)
+	buf.WriteByte('_')
+	buf.WriteString(name)
+
+	return buf.String()
+}
+
+// ComposeGlobalRuleName uses namespace, name to compose
+// the global_rule name.
+func ComposeGlobalRuleName(namespace, name string) string {
+	// FIXME Use sync.Pool to reuse this buffer if the upstream
+	// name composing code path is hot.
+	p := make([]byte, 0, len(namespace)+len(name)+1)
+	buf := bytes.NewBuffer(p)
+
+	buf.WriteString(namespace)
+	buf.WriteByte('_')
 	buf.WriteString(name)
 
 	return buf.String()

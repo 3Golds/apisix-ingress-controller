@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,7 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -26,12 +26,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"golang.org/x/net/nettest"
+
 	"github.com/apache/apisix-ingress-controller/pkg/metrics"
 	v1 "github.com/apache/apisix-ingress-controller/pkg/types/apisix/v1"
-
-	"github.com/stretchr/testify/assert"
-
-	"golang.org/x/net/nettest"
 )
 
 type fakeAPISIXUpstreamSrv struct {
@@ -84,7 +83,7 @@ func (srv *fakeAPISIXUpstreamSrv) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	if r.Method == http.MethodPut {
 		paths := strings.Split(r.URL.Path, "/")
 		key := fmt.Sprintf("/apisix/upstreams/%s", paths[len(paths)-1])
-		data, _ := ioutil.ReadAll(r.Body)
+		data, _ := io.ReadAll(r.Body)
 		srv.upstream[key] = data
 		w.WriteHeader(http.StatusCreated)
 		resp := fakeCreateResp{
@@ -107,7 +106,7 @@ func (srv *fakeAPISIXUpstreamSrv) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		data, _ := ioutil.ReadAll(r.Body)
+		data, _ := io.ReadAll(r.Body)
 		srv.upstream[id] = data
 
 		w.WriteHeader(http.StatusOK)
@@ -151,11 +150,13 @@ func TestUpstreamClient(t *testing.T) {
 	closedCh := make(chan struct{})
 	close(closedCh)
 	cli := newUpstreamClient(&cluster{
-		baseURL:          u.String(),
-		cli:              http.DefaultClient,
-		cache:            &dummyCache{},
-		cacheSynced:      closedCh,
-		metricsCollector: metrics.NewPrometheusCollector(),
+		baseURL:                 u.String(),
+		cli:                     http.DefaultClient,
+		cache:                   &dummyCache{},
+		generatedObjCache:       &dummyCache{},
+		cacheSynced:             closedCh,
+		metricsCollector:        metrics.NewPrometheusCollector(),
+		upstreamServiceRelation: &dummyUpstreamServiceRelation{},
 	})
 
 	// Create
@@ -181,7 +182,7 @@ func TestUpstreamClient(t *testing.T) {
 		Type:  lbType,
 		Key:   key,
 		Nodes: nodes,
-	})
+	}, false)
 	assert.Nil(t, err)
 	assert.Equal(t, "1", obj.ID)
 
@@ -194,7 +195,7 @@ func TestUpstreamClient(t *testing.T) {
 		Type:  lbType,
 		Key:   key,
 		Nodes: nodes,
-	})
+	}, false)
 	assert.Nil(t, err)
 	assert.Equal(t, "2", obj.ID)
 
@@ -221,7 +222,7 @@ func TestUpstreamClient(t *testing.T) {
 		Type:  "chash",
 		Key:   key,
 		Nodes: nodes,
-	})
+	}, false)
 	assert.Nil(t, err)
 	objs, err = cli.List(context.Background())
 	assert.Nil(t, err)

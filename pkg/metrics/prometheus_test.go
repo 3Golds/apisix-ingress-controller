@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func apisixBadStatusCodesTestHandler(t *testing.T, metrics []*io_prometheus_client.MetricFamily) func(*testing.T) {
+func apisixStatusCodesTestHandler(t *testing.T, metrics []*io_prometheus_client.MetricFamily) func(*testing.T) {
 	return func(t *testing.T) {
-		metric := findMetric("apisix_ingress_controller_apisix_bad_status_codes", metrics)
+		metric := findMetric("apisix_ingress_controller_apisix_status_codes", metrics)
 		assert.NotNil(t, metric)
 		assert.Equal(t, "GAUGE", metric.Type.String())
 		m := metric.GetMetric()
@@ -97,20 +97,26 @@ func apisixRequestTestHandler(t *testing.T, metrics []*io_prometheus_client.Metr
 		assert.Len(t, m, 2)
 
 		assert.Equal(t, *m[0].Counter.Value, float64(2))
+		assert.Len(t, m[0].Label, 4)
 		assert.Equal(t, *m[0].Label[0].Name, "controller_namespace")
 		assert.Equal(t, *m[0].Label[0].Value, "default")
 		assert.Equal(t, *m[0].Label[1].Name, "controller_pod")
 		assert.Equal(t, *m[0].Label[1].Value, "")
-		assert.Equal(t, *m[0].Label[2].Name, "resource")
-		assert.Equal(t, *m[0].Label[2].Value, "route")
+		assert.Equal(t, *m[0].Label[2].Name, "op")
+		assert.Equal(t, *m[0].Label[2].Value, "read")
+		assert.Equal(t, *m[0].Label[3].Name, "resource")
+		assert.Equal(t, *m[0].Label[3].Value, "route")
 
 		assert.Equal(t, *m[1].Counter.Value, float64(1))
+		assert.Len(t, m[1].Label, 4)
 		assert.Equal(t, *m[1].Label[0].Name, "controller_namespace")
 		assert.Equal(t, *m[1].Label[0].Value, "default")
 		assert.Equal(t, *m[1].Label[1].Name, "controller_pod")
 		assert.Equal(t, *m[1].Label[1].Value, "")
-		assert.Equal(t, *m[1].Label[2].Name, "resource")
-		assert.Equal(t, *m[1].Label[2].Value, "upstream")
+		assert.Equal(t, *m[1].Label[2].Name, "op")
+		assert.Equal(t, *m[1].Label[2].Value, "read")
+		assert.Equal(t, *m[1].Label[3].Name, "resource")
+		assert.Equal(t, *m[1].Label[3].Value, "upstream")
 	}
 }
 
@@ -206,9 +212,9 @@ func TestPrometheusCollector(t *testing.T) {
 	c.RecordAPISIXCode(404, "route")
 	c.RecordAPISIXCode(500, "upstream")
 	c.RecordAPISIXLatency(500*time.Millisecond, "create")
-	c.IncrAPISIXRequest("route")
-	c.IncrAPISIXRequest("route")
-	c.IncrAPISIXRequest("upstream")
+	c.IncrAPISIXReadRequest("route")
+	c.IncrAPISIXReadRequest("route")
+	c.IncrAPISIXReadRequest("upstream")
 	c.IncrCheckClusterHealth("test")
 	c.IncrSyncOperation("schema", "failure")
 	c.IncrSyncOperation("endpoint", "success")
@@ -218,7 +224,7 @@ func TestPrometheusCollector(t *testing.T) {
 	metrics, err := prometheus.DefaultGatherer.Gather()
 	assert.Nil(t, err)
 
-	t.Run("apisix_bad_status_codes", apisixBadStatusCodesTestHandler(t, metrics))
+	t.Run("apisix_status_codes", apisixStatusCodesTestHandler(t, metrics))
 	t.Run("is_leader", isLeaderTestHandler(t, metrics))
 	t.Run("apisix_request_latencies", apisixLatencyTestHandler(t, metrics))
 	t.Run("apisix_requests", apisixRequestTestHandler(t, metrics))

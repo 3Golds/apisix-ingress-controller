@@ -21,8 +21,10 @@ header:
 
   paths-ignore:
     - 'dist'
+    - 'vendor'
     - 'licenses'
     - '**/*.md'
+    - '**/*.mdx'
     - '**/testdata/**'
     - '**/go.mod'
     - '**/go.sum'
@@ -40,4 +42,6 @@ header:
     - 'utils/generate-groups.sh'
     - '**/*.pem'
     - '**/*.key'
+    - 'samples/deploy/gateway-api/**'
+    - '.gitattributes'
   comment: on-failure

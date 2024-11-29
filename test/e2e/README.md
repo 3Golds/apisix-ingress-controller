@@ -32,6 +32,8 @@ a e2e test scaffold is prepared to run test cases easily. The source codes are i
 * Create a http server with [kennethreitz/httpbin](https://hub.docker.com/r/kennethreitz/httpbin/) as the upstream.
 
 The above mentioned steps are run before each case starts and all resources will be destroyed after the case finishes.
+Sepecially, if test case failed and e2e-test run in dev mode, the related resources will not be destroyed. This fearure is useful for debugging.
+Also, you can disable this feature by unset `E2E_ENV=dev`.
 
 Plugins
 -------
@@ -41,18 +43,45 @@ Test cases inside `plugins` directory test the availability about APISIX plugins
 Features
 --------
 
-Test caes inside `features` directory test some features about APISIX, such as traffic-split, health check and so on.
+Test case inside `features` directory test some features about APISIX, such as traffic-split, health check and so on.
 
 Quick Start
 -----------
 
-Run `make e2e-test` to run the e2e test suites in your development environment, a several stuffs that this command will do:
+Run `make e2e-test-local` to run the e2e test suites in your development environment, a several stuffs that this command will do:
 
 1. Create a Kubernetes cluster by [kind](https://kind.sigs.k8s.io/), please installing in advance.
 2. Build and push all related images to this cluster.
 3. Run e2e test suites.
 
+Run `make e2e-test` to run the e2e test suites in an existing cluster, you can specify custom registry by passing REGISTRY(eg docker.io).
+
 Step `1` and `2` can be skipped by passing `E2E_SKIP_BUILD=1` to this directive, also, you can customize the
-running concurrency of e2e test suites by passing `E2E_CONCURRENCY=X` where `X` is the desired number of cases running in parallel.
+running concurrency of e2e test suites by passing `E2E_NODES=X` where `X` is the desired number of cases running in parallel.
+
+You can run specific test cases by passing the environment variable `E2E_FOCUS=suite-<suite name>`, where `<suite name>` can be found under `test/e2e` directory.
+For example, `E2E_FOCUS=suite-plugins* make e2e-test` will only run test cases in `test/e2e/suite-plugins` directory.
 
 Run `make kind-reset` to delete the cluster that created by `make e2e-test`.
+
+How to name test cases
+-----------
+
+Because we use `ginkgo --focus` option and the prefix `suite-<suite name>` to split test cases and make them run in parallel in CI, test cases should be named in the following way:
+
+- All test cases are grouped by directories, and **their names should have `suite-` prefix**
+- All top level specs (i.e. `ginkgo.Describe`) under the suite directory should have corresponding `suite-<suite-name>:` prefix.
+
+Run `make names-check` to check the above naming convention.
+
+APISIX Admin API: v2 and v3
+--------------------
+
+Since APISIX has released v3.0, in which the admin API has been changed, we are now using v3.0 admin API as the default API version for e2e tests.
+
+The v2 version tests will be run periodically.
+
+You can set the environment variable `APISIX_ADMIN_API_VERSION` to `v3` to run v3 version tests, any other value will be v2 version.
+
+The APISIX image tag will be automatically selected from `3.1.0-centos` and `2.15.0-alpine` based on the admin API version.
+If you want to use a specific APISIX version, please set the environment variable `TARGET_APISIX_VERSION`.

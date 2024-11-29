@@ -22,6 +22,8 @@ set -o pipefail
 
 # desired cluster name; default is "apisix"
 KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-apisix}"
+K8S_VERSION=${K8S_VERSION:-v1.21.1@sha256:69860bda5563ac81e3c0057d654b5253219618a22ec3a346306239bba8cfa1a6}
+REPOSITORY=${REPOSITORY:-localhost}
 
 if kind get clusters | grep -q ^apisix$ ; then
   echo "cluster already exists, moving on"
@@ -32,7 +34,7 @@ fi
 kind_version=$(kind version)
 kind_network='kind'
 reg_name='kind-registry'
-reg_port='5000'
+reg_port="${1:-5000}"
 case "${kind_version}" in
   "kind v0.7."* | "kind v0.6."* | "kind v0.5."*)
     kind_network='bridge'
@@ -54,7 +56,8 @@ fi
 echo "Registry Host: ${reg_host}"
 
 # create a cluster with the local registry enabled in containerd
-kind_node_image='kindest/node:v1.21.1@sha256:69860bda5563ac81e3c0057d654b5253219618a22ec3a346306239bba8cfa1a6'
+kind_node_image="kindest/node:${K8S_VERSION}"
+echo "Kubernetes version: ${kind_node_image}"
 cat <<EOF | kind create cluster --name "${KIND_CLUSTER_NAME}" --image ${kind_node_image} --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -62,15 +65,14 @@ nodes:
 - role: control-plane
 - role: worker
 - role: worker
-- role: worker
 containerdConfigPatches:
 - |-
-  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:${reg_port}"]
-    endpoint = ["http://${reg_host}:${reg_port}"]
+  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."${REPOSITORY}:${reg_port}"]
+    endpoint = ["http://${reg_host}:5000"]
 EOF
 
 for node in $(kind get nodes --name "${KIND_CLUSTER_NAME}"); do
-  kubectl annotate node "${node}" tilt.dev/registry=localhost:${reg_port};
+  kubectl annotate node "${node}" tilt.dev/registry=${REPOSITORY}:${reg_port};
 done
 
 if [ "${kind_network}" != "bridge" ]; then

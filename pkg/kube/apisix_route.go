@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,32 +17,20 @@ package kube
 import (
 	"errors"
 
-	configv2beta1 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/apis/config/v2beta1"
-	configv2beta2 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/apis/config/v2beta2"
-	configv2beta3 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/apis/config/v2beta3"
-	listersv2beta1 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/listers/config/v2beta1"
-	listersv2beta2 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/listers/config/v2beta2"
-	listersv2beta3 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/listers/config/v2beta3"
-)
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-const (
-	// ApisixRouteV2beta1 represents the ApisixRoute in apisix.apache.org/v2beta1 group version
-	ApisixRouteV2beta1 = "apisix.apache.org/v2beta1"
-	// ApisixRouteV2beta2 represents the ApisixRoute in apisix.apache.org/v2beta3 group version
-	ApisixRouteV2beta2 = "apisix.apache.org/v2beta2"
-	// ApisixRouteV2beta3 represents the ApisixRoute in apisix.apache.org/v2beta3 group version
-	ApisixRouteV2beta3 = "apisix.apache.org/v2beta3"
+	"github.com/apache/apisix-ingress-controller/pkg/config"
+	configv2 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/apis/config/v2"
+	listersv2 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/listers/config/v2"
 )
 
 // ApisixRouteLister is an encapsulation for the lister of ApisixRoute,
 // it aims at to be compatible with different ApisixRoute versions.
 type ApisixRouteLister interface {
-	// V2beta1 gets the ApisixRoute in apisix.apache.org/v2beta1.
-	V2beta1(string, string) (ApisixRoute, error)
-	// V2beta2 gets the ApisixRoute in apisix.apache.org/v2beta3.
-	V2beta2(string, string) (ApisixRoute, error)
-	// V2beta3 gets the ApisixRoute in apisix.apache.org/v2beta3.
-	V2beta3(string, string) (ApisixRoute, error)
+	// V2 gets the ApisixRoute in apisix.apache.org/v2.
+	V2(string, string) (ApisixRoute, error)
+	// V2Lister gets the v2 lister
+	V2Lister() listersv2.ApisixRouteLister
 }
 
 // ApisixRouteInformer is an encapsulation for the informer of ApisixRoute,
@@ -57,18 +45,14 @@ type ApisixRoute interface {
 	// GroupVersion returns the api group version of the
 	// real ApisixRoute.
 	GroupVersion() string
-	// V2beta1 returns the ApisixRoute in apisix.apache.org/v2beta1, the real
+	// V2 returns the ApisixRoute in apisix.apache.org/v2, the real
 	// ApisixRoute must be in this group version, otherwise will panic.
-	V2beta1() *configv2beta1.ApisixRoute
-	// V2beta2 returns the ApisixRoute in apisix.apache.org/v2beta3, the real
-	// ApisixRoute must be in this group version, otherwise will panic.
-	V2beta2() *configv2beta2.ApisixRoute
-	// V2beta3 returns the ApisixRoute in apisix.apache.org/v2beta3, the real
-	// ApisixRoute must be in this group version, otherwise will panic.
-	V2beta3() *configv2beta3.ApisixRoute
+	V2() *configv2.ApisixRoute
 	// ResourceVersion returns the the resource version field inside
 	// the real ApisixRoute.
 	ResourceVersion() string
+
+	metav1.Object
 }
 
 // ApisixRouteEvent contains the ApisixRoute key (namespace/name)
@@ -81,29 +65,19 @@ type ApisixRouteEvent struct {
 
 type apisixRoute struct {
 	groupVersion string
-	v2beta1      *configv2beta1.ApisixRoute
-	v2beta2      *configv2beta2.ApisixRoute
-	v2beta3      *configv2beta3.ApisixRoute
+	v2           *configv2.ApisixRoute
+	metav1.Object
 }
 
-func (ar *apisixRoute) V2beta1() *configv2beta1.ApisixRoute {
-	if ar.groupVersion != ApisixRouteV2beta1 {
-		panic("not a apisix.apache.org/v2beta1 ingress")
-	}
-	return ar.v2beta1
-}
-func (ar *apisixRoute) V2beta2() *configv2beta2.ApisixRoute {
-	if ar.groupVersion != ApisixRouteV2beta2 {
-		panic("not a apisix.apache.org/v2beta3 ingress")
-	}
-	return ar.v2beta2
+func (l *apisixRouteLister) V2Lister() listersv2.ApisixRouteLister {
+	return l.v2Lister
 }
 
-func (ar *apisixRoute) V2beta3() *configv2beta3.ApisixRoute {
-	if ar.groupVersion != ApisixRouteV2beta3 {
-		panic("not a apisix.apache.org/v2beta3 ingress")
+func (ar *apisixRoute) V2() *configv2.ApisixRoute {
+	if ar.groupVersion != config.ApisixV2 {
+		panic("not a apisix.apache.org/v2 route")
 	}
-	return ar.v2beta3
+	return ar.v2
 }
 
 func (ar *apisixRoute) GroupVersion() string {
@@ -111,50 +85,22 @@ func (ar *apisixRoute) GroupVersion() string {
 }
 
 func (ar *apisixRoute) ResourceVersion() string {
-	if ar.groupVersion == ApisixRouteV2beta1 {
-		return ar.V2beta1().ResourceVersion
-	} else if ar.groupVersion == ApisixRouteV2beta2 {
-		return ar.V2beta2().ResourceVersion
-	}
-	return ar.V2beta3().ResourceVersion
+	return ar.V2().ResourceVersion
 }
 
 type apisixRouteLister struct {
-	v2beta1Lister listersv2beta1.ApisixRouteLister
-	v2beta2Lister listersv2beta2.ApisixRouteLister
-	v2beta3Lister listersv2beta3.ApisixRouteLister
+	v2Lister listersv2.ApisixRouteLister
 }
 
-func (l *apisixRouteLister) V2beta1(namespace, name string) (ApisixRoute, error) {
-	ar, err := l.v2beta1Lister.ApisixRoutes(namespace).Get(name)
+func (l *apisixRouteLister) V2(namespace, name string) (ApisixRoute, error) {
+	ar, err := l.v2Lister.ApisixRoutes(namespace).Get(name)
 	if err != nil {
 		return nil, err
 	}
 	return &apisixRoute{
-		groupVersion: ApisixRouteV2beta1,
-		v2beta1:      ar,
-	}, nil
-}
-
-func (l *apisixRouteLister) V2beta2(namespace, name string) (ApisixRoute, error) {
-	ar, err := l.v2beta2Lister.ApisixRoutes(namespace).Get(name)
-	if err != nil {
-		return nil, err
-	}
-	return &apisixRoute{
-		groupVersion: ApisixRouteV2beta2,
-		v2beta2:      ar,
-	}, nil
-}
-
-func (l *apisixRouteLister) V2beta3(namespace, name string) (ApisixRoute, error) {
-	ar, err := l.v2beta3Lister.ApisixRoutes(namespace).Get(name)
-	if err != nil {
-		return nil, err
-	}
-	return &apisixRoute{
-		groupVersion: ApisixRouteV2beta3,
-		v2beta3:      ar,
+		groupVersion: config.ApisixV2,
+		v2:           ar,
+		Object:       ar,
 	}, nil
 }
 
@@ -162,20 +108,11 @@ func (l *apisixRouteLister) V2beta3(namespace, name string) (ApisixRoute, error)
 // type of obj.
 func MustNewApisixRoute(obj interface{}) ApisixRoute {
 	switch ar := obj.(type) {
-	case *configv2beta1.ApisixRoute:
+	case *configv2.ApisixRoute:
 		return &apisixRoute{
-			groupVersion: ApisixRouteV2beta1,
-			v2beta1:      ar,
-		}
-	case *configv2beta2.ApisixRoute:
-		return &apisixRoute{
-			groupVersion: ApisixRouteV2beta2,
-			v2beta2:      ar,
-		}
-	case *configv2beta3.ApisixRoute:
-		return &apisixRoute{
-			groupVersion: ApisixRouteV2beta3,
-			v2beta3:      ar,
+			groupVersion: config.ApisixV2,
+			v2:           ar,
+			Object:       ar,
 		}
 	default:
 		panic("invalid ApisixRoute type")
@@ -187,30 +124,19 @@ func MustNewApisixRoute(obj interface{}) ApisixRoute {
 // type assertion fails.
 func NewApisixRoute(obj interface{}) (ApisixRoute, error) {
 	switch ar := obj.(type) {
-	case *configv2beta1.ApisixRoute:
+	case *configv2.ApisixRoute:
 		return &apisixRoute{
-			groupVersion: ApisixRouteV2beta1,
-			v2beta1:      ar,
-		}, nil
-	case *configv2beta2.ApisixRoute:
-		return &apisixRoute{
-			groupVersion: ApisixRouteV2beta2,
-			v2beta2:      ar,
-		}, nil
-	case *configv2beta3.ApisixRoute:
-		return &apisixRoute{
-			groupVersion: ApisixRouteV2beta3,
-			v2beta3:      ar,
+			groupVersion: config.ApisixV2,
+			v2:           ar,
+			Object:       ar,
 		}, nil
 	default:
 		return nil, errors.New("invalid ApisixRoute type")
 	}
 }
 
-func NewApisixRouteLister(v2beta1 listersv2beta1.ApisixRouteLister, v2beta2 listersv2beta2.ApisixRouteLister, v2beta3 listersv2beta3.ApisixRouteLister) ApisixRouteLister {
+func NewApisixRouteLister(v2 listersv2.ApisixRouteLister) ApisixRouteLister {
 	return &apisixRouteLister{
-		v2beta1Lister: v2beta1,
-		v2beta2Lister: v2beta2,
-		v2beta3Lister: v2beta3,
+		v2Lister: v2,
 	}
 }

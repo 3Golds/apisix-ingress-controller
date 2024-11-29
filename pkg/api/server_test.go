@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,7 +15,6 @@
 package api
 
 import (
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -79,11 +78,11 @@ bKS1uxKukPFp6zxFwR7YZIiwo3tGkcudpHdTNurNMQiSTN97LTo8KL8y
 )
 
 func generateCertFiles() (certFileName string, keyFileName string) {
-	certFile, _ := ioutil.TempFile("", "cert.*.pem")
+	certFile, _ := os.CreateTemp("", "cert.*.pem")
 	certFileName = certFile.Name()
 	_, _ = certFile.Write([]byte(_tlsCert))
 
-	keyFile, _ := ioutil.TempFile("", "key.*.pem")
+	keyFile, _ := os.CreateTemp("", "key.*.pem")
 	keyFileName = keyFile.Name()
 	_, _ = keyFile.Write([]byte(_tlsKey))
 	return

@@ -31,7 +31,7 @@ rm -rf "$GENERATED_ROOT"
 
 bash "${SCRIPT_ROOT}"/generate-groups.sh "deepcopy,client,informer,lister" \
   ${PKG_NAME}/pkg/kube/apisix/client ${PKG_NAME}/pkg/kube/apisix/apis \
-  config:v2beta3,v2beta2,v2beta1 ${PKG_NAME} \
+  config:v2 ${PKG_NAME} \
   --output-base "$GENERATED_ROOT" \
   --go-header-file "${SCRIPT_ROOT}"/boilerplate.go.txt \
   "$@"
@@ -42,6 +42,13 @@ bash "${SCRIPT_ROOT}"/generate-groups.sh "deepcopy" \
   --output-base "$GENERATED_ROOT" \
   --go-header-file "${SCRIPT_ROOT}"/boilerplate.go.txt \
   "$@"
+
+#bash "${SCRIPT_ROOT}"/generate-groups.sh "register" \
+  #${PKG_NAME}/pkg/kube/apisix/apis ${PKG_NAME}/pkg/kube/apisix/apis \
+  #config:v2,v1 ${PKG_NAME} \
+  #--output-base "$GENERATED_ROOT" \
+  #--go-header-file "${SCRIPT_ROOT}"/boilerplate.go.txt \
+  #"$@"
 
 cp -r "$GENERATED_ROOT/${PKG_NAME}/"** "$PROJECT_ROOT"
 rm -rf "$GENERATED_ROOT"

@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,11 +18,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/onsi/ginkgo"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	"github.com/gruntwork-io/terratest/modules/k8s"
+	ginkgo "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
@@ -64,7 +63,7 @@ spec:
             tcpSocket:
               port: 80
             timeoutSeconds: 2
-          image: "localhost:5000/kennethreitz/httpbin"
+          image: "localhost:5000/httpbin:dev"
           imagePullPolicy: IfNotPresent
           name: httpbin-deployment-e2e-test
           ports:
@@ -90,11 +89,11 @@ spec:
 )
 
 func (s *Scaffold) newHTTPBIN() (*corev1.Service, error) {
-	httpbinDeployment := fmt.Sprintf(_httpbinDeploymentTemplate, 1)
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, httpbinDeployment); err != nil {
+	httpbinDeployment := fmt.Sprintf(s.FormatRegistry(_httpbinDeploymentTemplate), 1)
+	if err := s.CreateResourceFromString(httpbinDeployment); err != nil {
 		return nil, err
 	}
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, _httpService); err != nil {
+	if err := s.CreateResourceFromString(_httpService); err != nil {
 		return nil, err
 	}
 	svc, err := k8s.GetServiceE(s.t, s.kubectlOptions, "httpbin-service-e2e-test")
@@ -104,10 +103,19 @@ func (s *Scaffold) newHTTPBIN() (*corev1.Service, error) {
 	return svc, nil
 }
 
+func (s *Scaffold) NewHTTPBINWithNamespace(namespace string) (*corev1.Service, error) {
+	originalNamespace := s.kubectlOptions.Namespace
+	s.kubectlOptions.Namespace = namespace
+	defer func() {
+		s.kubectlOptions.Namespace = originalNamespace
+	}()
+	return s.newHTTPBIN()
+}
+
 // ScaleHTTPBIN scales the number of HTTPBIN pods to desired.
 func (s *Scaffold) ScaleHTTPBIN(desired int) error {
-	httpbinDeployment := fmt.Sprintf(_httpbinDeploymentTemplate, desired)
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, httpbinDeployment); err != nil {
+	httpbinDeployment := fmt.Sprintf(s.FormatRegistry(_httpbinDeploymentTemplate), desired)
+	if err := s.CreateResourceFromString(httpbinDeployment); err != nil {
 		return err
 	}
 	if err := k8s.WaitUntilNumPodsCreatedE(s.t, s.kubectlOptions, s.labelSelector("app=httpbin-deployment-e2e-test"), desired, 5, 5*time.Second); err != nil {

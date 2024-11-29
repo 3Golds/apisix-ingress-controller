@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -54,7 +54,7 @@ func (srv *fakeAPISIXSchemaSrv) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 
 	if r.Method == http.MethodGet {
-		name := strings.Trim(strings.TrimPrefix(r.URL.Path, "/apisix/admin/schema/"), "/")
+		name := strings.TrimPrefix(r.URL.Path, "/apisix/admin/schema/")
 		if len(name) < 1 {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -107,11 +107,12 @@ func TestSchemaClient(t *testing.T) {
 	closedCh := make(chan struct{})
 	close(closedCh)
 	cli := newSchemaClient(&cluster{
-		baseURL:          u.String(),
-		cli:              http.DefaultClient,
-		cache:            &dummyCache{},
-		cacheSynced:      closedCh,
-		metricsCollector: metrics.NewPrometheusCollector(),
+		baseURL:           u.String(),
+		cli:               http.DefaultClient,
+		cache:             &dummyCache{},
+		generatedObjCache: &dummyCache{},
+		cacheSynced:       closedCh,
+		metricsCollector:  metrics.NewPrometheusCollector(),
 	})
 
 	ctx := context.TODO()

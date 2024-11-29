@@ -1,7 +1,12 @@
 ---
-title: Install Ingress APISIX on KubeSphere
+title: KubeSphere
+keywords:
+  - APISIX ingress
+  - Apache APISIX
+  - Kubernetes ingress
+  - KubeSphere
+description: Guide to install APISIX ingress controller on KubeSphere Container Platform.
 ---
-
 <!--
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
@@ -21,52 +26,96 @@ title: Install Ingress APISIX on KubeSphere
 #
 -->
 
-This document explains how to install Ingress APISIX on [KubeSphere](https://kubesphere.io/).
-
-KubeSphere is a distributed operating system managing cloud native applications with Kubernetes as its kernel, and provides plug-and-play architecture for the seamless integration of third-party applications to boost its ecosystem.
+This guide explains how you can install APISIX ingress on [KubeSphere](https://kubesphere.io/) distributed operating system.
 
 ## Prerequisites
 
-* Install [KubeSphere](https://kubesphere.io/docs/quick-start/), you can choose [All-in-one Installation on Linux](https://kubesphere.io/docs/quick-start/all-in-one-on-linux/) or [Minimal KubeSphere on Kubernetes](https://kubesphere.io/docs/quick-start/minimal-kubesphere-on-k8s/).
+Setting up APISIX ingress on KubeSphere requires the following:
+
+* Install [KubeSphere](https://kubesphere.io/docs/quick-start/) on Linux or minimally on Kubernetes.
 * Install [Helm](https://helm.sh/).
 
-## Install APISIX and apisix-ingress-controller
+## Install APISIX and ingress controller
 
-As the data plane of apisix-ingress-controller, [Apache APISIX](http://apisix.apache.org/) can be deployed at the same time using Helm chart.
+The script below installs APISIX and the ingress controller:
 
 ```shell
 helm repo add apisix https://charts.apiseven.com
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
-kubectl create ns ingress-apisix
+#  We use Apisix 3.0 in this example. If you're using Apisix v2.x, please set to v2
+ADMIN_API_VERSION=v3
 helm install apisix apisix/apisix \
-  --set gateway.type=NodePort \
+  --set service.type=NodePort \
   --set ingress-controller.enabled=true \
+  --create-namespace \
   --namespace ingress-apisix \
-  --set ingress-controller.config.apisix.serviceNamespace=ingress-apisix
+  --set ingress-controller.config.apisix.serviceNamespace=ingress-apisix \
+  --set ingress-controller.config.apisix.adminAPIVersion=$ADMIN_API_VERSION
 kubectl get service --namespace ingress-apisix
 ```
 
-Five Service resources were created.
+:::note
 
-* `apisix-gateway`, which processes the real traffic;
-* `apisix-admin`, which acts as the control plane to process all the configuration changes.
-* `apisix-ingress-controller`, which exposes apisix-ingress-controller's metrics.
-* `apisix-etcd` and `apisix-etcd-headless` for etcd service and internal communication.
+By default, APISIX ingress controller will watch the apiVersion of `networking.k8s.io/v1`.
 
-The gateway service type is set to `NodePort`, so that clients can access Apache APISIX through the Node IPs and the assigned port.
-If you want to expose a `LoadBalancer` service, try to use [Porter](https://github.com/kubesphere/porter).
+If the target Kubernetes version is under `v1.19`, add the flag `--set ingress-controller.config.kubernetes.ingressVersion=networking/v1beta1`.
 
-Now try to create some [resources](https://github.com/apache/apisix-ingress-controller/tree/master/docs/en/latest/concepts) to verify the running status. As a minimalist example, see [proxy-the-httpbin-service](../practices/proxy-the-httpbin-service.md) to learn how to apply resources to drive the apisix-ingress-controller.
+Else, if your Kubernetes cluster version is under `v1.16`, set the flag `--set ingress-controller.config.kubernetes.ingressVersion=extensions/v1beta1`.
 
-### Specify The Ingress Version
+:::
 
-apisix-ingress-controller will watch apiVersion of `networking.k8s.io/v1` by default. If the target kubernetes version is under `v1.19`, add `--set ingress-controller.config.kubernetes.ingressVersion=networking/v1beta1` or `--set ingress-controller.config.kubernetes.ingressVersion=extensions/v1beta1` if your kubernetes cluster is under `v1.16`
+:::tip
+
+APISIX Ingress also supports (beta) the new [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/).
+
+If the Gateway API CRDs are not installed in your cluster by default, you can install it by running:
+
+```shell
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v0.5.0/standard-install.yaml
+```
+
+You should also enable APISIX Ingress controller to work with the Gateway API. You can do this by adding the flag `--set ingress-controller.config.kubernetes.enableGatewayAPI=true` while installing through Helm.
+
+See [this tutorial](https://apisix.apache.org/docs/ingress-controller/tutorials/configure-ingress-with-gateway-api) for more info.
+
+:::
+
+This will create the five resources mentioned below:
+
+* `apisix-gateway`: dataplane the process the traffic.
+* `apisix-admin`: control plane that processes all configuration changes.
+* `apisix-ingress-controller`: ingress controller which exposes APISIX.
+* `apisix-etcd` and `apisix-etcd-headless`: stores configuration and handles internal communication.
+
+The gateway service type is set to `NodePort`. Clients can access APISIX through the Node IPs and the assigned port. To use a service of type `LoadBalancer` with KubeSphere use a bare-metal load balancer implementation like [openelb](https://github.com/openelb/openelb).
+
+You should now be able to use APISIX ingress controller. You can try running this [minimal example](../tutorials/proxy-the-httpbin-service.md) to see if everything is working perfectly.
+
+## Next steps
 
 ### Enable SSL
 
-The ssl config is disabled by default, add `--set gateway.tls.enabled=true` to enable tls support.
+SSL is disabled by default. You can enable it by adding the flag `--set apisix.ssl.enabled=true`.
 
-### Change default apikey
+### Change default keys
 
-It's Recommended to change the default key by add `--set ingress-controller.config.apisix.adminKey=ADMIN_KEY_GENERATED_BY_YOURSELF`, `--set admin.credentials.admin=ADMIN_KEY_GENERATED_BY_YOURSELF`, `--set admin.credentials.viewer=VIEWER_KEY_GENERATED_BY_YOURSELF`, notice that `ingress-controller.config.apisix.adminKey` and `admin.credentials.admin` must be the same, and should better not same as `admin.credentials.viewer`.
+It is recommended to change the default keys for security:
+
+```shell
+--set ingress-controller.config.apisix.adminKey=ADMIN_KEY_GENERATED_BY_YOURSELF
+```
+
+```shell
+--set admin.credentials.admin=ADMIN_KEY_GENERATED_BY_YOURSELF
+```
+
+```shell
+--set admin.credentials.viewer=VIEWER_KEY_GENERATED_BY_YOURSELF
+```
+
+:::note
+
+The `ingress-controller.config.apisix.adminKey` and `admin.credentials.admin` must be the same. It is better if these are not same as `admin.credentials.viewer`.
+
+:::

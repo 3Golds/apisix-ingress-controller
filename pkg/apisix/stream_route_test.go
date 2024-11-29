@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,7 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -26,11 +26,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/apache/apisix-ingress-controller/pkg/metrics"
-	v1 "github.com/apache/apisix-ingress-controller/pkg/types/apisix/v1"
-
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/nettest"
+
+	"github.com/apache/apisix-ingress-controller/pkg/metrics"
+	v1 "github.com/apache/apisix-ingress-controller/pkg/types/apisix/v1"
 )
 
 type fakeAPISIXStreamRouteSrv struct {
@@ -83,7 +83,7 @@ func (srv *fakeAPISIXStreamRouteSrv) ServeHTTP(w http.ResponseWriter, r *http.Re
 	if r.Method == http.MethodPut {
 		paths := strings.Split(r.URL.Path, "/")
 		key := fmt.Sprintf("/apisix/stream_routes/%s", paths[len(paths)-1])
-		data, _ := ioutil.ReadAll(r.Body)
+		data, _ := io.ReadAll(r.Body)
 		srv.streamRoute[key] = data
 		w.WriteHeader(http.StatusCreated)
 		resp := fakeCreateResp{
@@ -106,7 +106,7 @@ func (srv *fakeAPISIXStreamRouteSrv) ServeHTTP(w http.ResponseWriter, r *http.Re
 			return
 		}
 
-		data, _ := ioutil.ReadAll(r.Body)
+		data, _ := io.ReadAll(r.Body)
 		srv.streamRoute[id] = data
 
 		w.WriteHeader(http.StatusOK)
@@ -152,11 +152,12 @@ func TestStreamRouteClient(t *testing.T) {
 	closedCh := make(chan struct{})
 	close(closedCh)
 	cli := newStreamRouteClient(&cluster{
-		baseURL:          u.String(),
-		cli:              http.DefaultClient,
-		cache:            &dummyCache{},
-		cacheSynced:      closedCh,
-		metricsCollector: metrics.NewPrometheusCollector(),
+		baseURL:           u.String(),
+		cli:               http.DefaultClient,
+		cache:             &dummyCache{},
+		generatedObjCache: &dummyCache{},
+		cacheSynced:       closedCh,
+		metricsCollector:  metrics.NewPrometheusCollector(),
 	})
 
 	// Create
@@ -164,17 +165,21 @@ func TestStreamRouteClient(t *testing.T) {
 		ID:         "1",
 		ServerPort: 8001,
 		UpstreamId: "1",
-	})
+		SNI:        "a.test.com",
+	}, false)
 	assert.Nil(t, err)
 	assert.Equal(t, obj.ID, "1")
+	assert.Equal(t, obj.SNI, "a.test.com")
 
 	obj, err = cli.Create(context.Background(), &v1.StreamRoute{
 		ID:         "2",
 		ServerPort: 8002,
 		UpstreamId: "1",
-	})
+		SNI:        "*.test.com",
+	}, false)
 	assert.Nil(t, err)
 	assert.Equal(t, obj.ID, "2")
+	assert.Equal(t, obj.SNI, "*.test.com")
 
 	// List
 	objs, err := cli.List(context.Background())
@@ -194,10 +199,12 @@ func TestStreamRouteClient(t *testing.T) {
 	_, err = cli.Update(context.Background(), &v1.StreamRoute{
 		ID:         "2",
 		UpstreamId: "112",
-	})
+	}, false)
 	assert.Nil(t, err)
 	objs, err = cli.List(context.Background())
 	assert.Nil(t, err)
 	assert.Len(t, objs, 1)
 	assert.Equal(t, "2", objs[0].ID)
+	assert.Equal(t, "112", objs[0].UpstreamId)
+	assert.Equal(t, "", objs[0].SNI)
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/apache/apisix-ingress-controller/pkg/apisix"
 	"github.com/apache/apisix-ingress-controller/pkg/config"
 	"github.com/apache/apisix-ingress-controller/pkg/log"
+	"github.com/apache/apisix-ingress-controller/pkg/metrics"
 	"github.com/apache/apisix-ingress-controller/pkg/types"
 )
 
@@ -50,7 +51,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 	gin.SetMode(gin.ReleaseMode)
 	httpServer := gin.New()
-	httpServer.Use(gin.Recovery(), gin.Logger())
+	httpServer.Use(log.GinRecovery(true), log.GinLogger())
 	apirouter.Mount(httpServer)
 
 	srv := &Server{
@@ -70,28 +71,33 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		httpServer.GET("/debug/pprof/*profile", gin.WrapF(srv.pprofMu.ServeHTTP))
 	}
 
-	cert, err := tls.LoadX509KeyPair(cfg.CertFilePath, cfg.KeyFilePath)
-	if err != nil {
-		log.Warnw("failed to load x509 key pair, will not start admission server",
-			zap.String("Error", err.Error()),
-			zap.String("CertFilePath", cfg.CertFilePath),
-			zap.String("KeyFilePath", cfg.KeyFilePath),
-		)
-	} else {
-		admission := gin.New()
-		admission.Use(gin.Recovery(), gin.Logger())
-		apirouter.MountWebhooks(admission, &apisix.ClusterOptions{
-			Name:     cfg.APISIX.DefaultClusterName,
-			AdminKey: cfg.APISIX.DefaultClusterAdminKey,
-			BaseURL:  cfg.APISIX.DefaultClusterBaseURL,
-		})
+	if cfg.Kubernetes.EnableAdmission {
+		cert, err := tls.LoadX509KeyPair(cfg.CertFilePath, cfg.KeyFilePath)
+		if err != nil {
+			log.Warnw("failed to load x509 key pair, will not start admission server",
+				zap.String("Error", err.Error()),
+				zap.String("CertFilePath", cfg.CertFilePath),
+				zap.String("KeyFilePath", cfg.KeyFilePath),
+			)
+		} else {
+			admission := gin.New()
+			admission.Use(gin.Recovery(), gin.Logger())
+			apirouter.MountWebhooks(admission, &apisix.ClusterOptions{
+				AdminAPIVersion:  cfg.Kubernetes.APIVersion,
+				Name:             cfg.APISIX.DefaultClusterName,
+				AdminKey:         cfg.APISIX.DefaultClusterAdminKey,
+				BaseURL:          cfg.APISIX.DefaultClusterBaseURL,
+				MetricsCollector: metrics.NewPrometheusCollector(),
+				SchemaSynced:     true,
+			})
 
-		srv.admissionServer = &http.Server{
-			Addr:    cfg.HTTPSListen,
-			Handler: admission,
-			TLSConfig: &tls.Config{
-				Certificates: []tls.Certificate{cert},
-			},
+			srv.admissionServer = &http.Server{
+				Addr:    cfg.HTTPSListen,
+				Handler: admission,
+				TLSConfig: &tls.Config{
+					Certificates: []tls.Certificate{cert},
+				},
+			}
 		}
 	}
 
@@ -117,7 +123,7 @@ func (srv *Server) Run(stopCh <-chan struct{}) error {
 				return
 			case <-closed:
 				cnt--
-				log.Debug("close a server")
+				log.Debug("close listen server")
 			}
 		}
 	}()

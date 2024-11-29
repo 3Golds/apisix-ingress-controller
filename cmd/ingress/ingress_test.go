@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -70,8 +70,8 @@ func TestSignalHandler(t *testing.T) {
 		"--enable-profiling",
 		"--kubeconfig", "/foo/bar/baz",
 		"--resync-interval", "24h",
-		"--apisix-base-url", "http://apisixgw.default.cluster.local/apisix",
-		"--apisix-admin-key", "0x123",
+		"--default-apisix-cluster-base-url", "http://apisixgw.default.cluster.local/apisix",
+		"--default-apisix-cluster-admin-key", "0x123",
 	})
 	waitCh := make(chan struct{})
 	go func() {
@@ -106,8 +106,8 @@ func TestNewIngressCommandEffectiveLog(t *testing.T) {
 		"--enable-profiling",
 		"--kubeconfig", "/foo/bar/baz",
 		"--resync-interval", "24h",
-		"--apisix-base-url", "http://apisixgw.default.cluster.local/apisix",
-		"--apisix-admin-key", "0x123",
+		"--default-apisix-cluster-base-url", "http://apisixgw.default.cluster.local/apisix",
+		"--default-apisix-cluster-admin-key", "0x123",
 	})
 	defer os.Remove("./test.log")
 
@@ -126,7 +126,7 @@ func TestNewIngressCommandEffectiveLog(t *testing.T) {
 
 	buf := bufio.NewReader(file)
 	f := parseLog(t, buf)
-	assert.Contains(t, f.Message, "apisix ingress controller started")
+	assert.Contains(t, f.Message, "init apisix ingress controller")
 	assert.Equal(t, "info", f.Level)
 
 	f = parseLog(t, buf)
@@ -148,8 +148,8 @@ func TestNewIngressCommandEffectiveLog(t *testing.T) {
 	assert.Equal(t, true, cfg.EnableProfiling)
 	assert.Equal(t, "/foo/bar/baz", cfg.Kubernetes.Kubeconfig)
 	assert.Equal(t, types.TimeDuration{Duration: 24 * time.Hour}, cfg.Kubernetes.ResyncInterval)
-	assert.Equal(t, "0x123", cfg.APISIX.AdminKey)
-	assert.Equal(t, "http://apisixgw.default.cluster.local/apisix", cfg.APISIX.BaseURL)
+	assert.Equal(t, "******", cfg.APISIX.DefaultClusterAdminKey)
+	assert.Equal(t, "http://apisixgw.default.cluster.local/apisix", cfg.APISIX.DefaultClusterBaseURL)
 }
 
 func parseLog(t *testing.T, r *bufio.Reader) *fields {
@@ -161,4 +161,56 @@ func parseLog(t *testing.T, r *bufio.Reader) *fields {
 	err = json.Unmarshal(line, &f)
 	assert.Nil(t, err)
 	return &f
+}
+
+func TestRotateLog(t *testing.T) {
+	listen := getRandomListen()
+	cmd := NewIngressCommand()
+	cmd.SetArgs([]string{
+		"--log-rotate-output-path", "./testlog/test.log",
+		"--log-rotate-max-size", "1",
+		"--log-level", "debug",
+		"--log-output", "./testlog/test.log",
+		"--http-listen", listen,
+		"--enable-profiling",
+		"--kubeconfig", "/foo/bar/baz",
+		"--resync-interval", "24h",
+		"--default-apisix-cluster-base-url", "http://apisixgw.default.cluster.local/apisix",
+		"--default-apisix-cluster-admin-key", "0x123",
+	})
+	defer os.RemoveAll("./testlog/")
+
+	stopCh := make(chan struct{})
+	go func() {
+		assert.Nil(t, cmd.Execute())
+		close(stopCh)
+	}()
+
+	fws := &fakeWriteSyncer{}
+	logger, err := log.NewLogger(log.WithLogLevel("debug"), log.WithWriteSyncer(fws))
+	assert.Nil(t, err)
+	defer logger.Close()
+	log.DefaultLogger = logger
+
+	// fill logs with data until the size > 1m
+	line := ""
+	for i := 0; i < 256; i++ {
+		line += "0"
+	}
+
+	for i := 0; i < 4096; i++ {
+		log.Debug(line)
+	}
+
+	time.Sleep(5 * time.Second)
+	assert.Nil(t, syscall.Kill(os.Getpid(), syscall.SIGINT))
+	<-stopCh
+
+	files, err := os.ReadDir("./testlog")
+
+	if err != nil {
+		t.Fatalf("Unable to read log dir: %v", err)
+	}
+
+	assert.Equal(t, true, len(files) >= 2)
 }
