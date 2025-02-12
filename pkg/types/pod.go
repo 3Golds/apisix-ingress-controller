@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,7 +29,7 @@ var (
 	ErrPodNotFound = errors.New("pod not found")
 )
 
-// PodCache caches pod. Currently it doesn't cache the pod object but only its
+// PodCache caches pod. Currently, it doesn't cache the pod object but only its
 // name.
 type PodCache interface {
 	// Add adds a pod to cache, only pod which state is RUNNING will be

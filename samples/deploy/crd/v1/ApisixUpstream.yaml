@@ -29,7 +29,7 @@ spec:
     shortNames:
       - au
   versions:
-    - name: v2beta3
+    - name: v2
       served: true
       storage: true
       subresources:
@@ -41,6 +41,37 @@ spec:
             spec:
               type: object
               properties:
+                ingressClassName:
+                  type: string
+                discovery:
+                  description: Discovery is used to configure service discovery for
+                    upstream
+                  type: object
+                  properties:
+                    serviceName:
+                      type: string
+                    type:
+                      type: string
+                    args:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                externalNodes:
+                  description: ExternalNodes contains external nodes the Upstream
+                    should use If this field is set, the upstream will use these nodes
+                    directly without any further resolves
+                  type: array
+                  items:
+                    description: ApisixUpstreamExternalNode is the external node conf
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      type:
+                        type: string
+                      weight:
+                        type: integer
+                      port:
+                        type: integer
                 subsets:
                   type: array
                   items:
@@ -94,8 +125,18 @@ spec:
                       type: string
                     send:
                       type: string
+                passHost:
+                  type: string
+                  enum:
+                    - pass
+                    - node
+                    - rewrite
+                upstreamHost:
+                  type: string
+                  pattern: "^\\*?[0-9a-zA-Z-._]+$"
                 tlsSecret:
-                  description: ApisixSecret describes the Kubernetes Secret name and namespace.
+                  description: ApisixSecret describes the Kubernetes Secret name and
+                    namespace.
                   type: object
                   required:
                     - name
@@ -401,3 +442,21 @@ spec:
                                     maximum: 254
                                   timeout:
                                     type: string
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      "type":
+                        type: string
+                      reason:
+                        type: string
+                      status:
+                        type: string
+                      message:
+                        type: string
+                      observedGeneration:
+                        type: integer

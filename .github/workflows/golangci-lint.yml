@@ -25,7 +25,7 @@ on:
   pull_request:
     branches:
       - master
-    type: [review_requested, ready_for_review]
+      - 1.8.0
 
 jobs:
   changes:
@@ -35,7 +35,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -57,6 +57,7 @@ jobs:
               - 'test/e2e/**/*'
               - 'conf/**'
               - 'utils/**'
+              - ".github/**"
   golangci:
     name: lint
     needs: changes
@@ -64,14 +65,14 @@ jobs:
       (needs.changes.outputs.go == 'true')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: setup go
-        uses: actions/setup-go@v1
+      - uses: actions/checkout@v4
+      - name: Setup Go Env
+        uses: actions/setup-go@v4
         with:
-          go-version: '1.13'
+          go-version: '1.20'
 
       - name: Download golangci-lint
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.39.0
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.52.2
 
       - name: 🛩️ golangci-lint
         run: $(go env GOPATH)/bin/golangci-lint run --tests=false --timeout 300s ./...

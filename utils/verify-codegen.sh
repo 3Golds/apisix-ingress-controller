@@ -33,6 +33,7 @@ trap 'rm -rf "$GENERATED_ROOT"' EXIT
 # Prepare existed codes
 mkdir -p "${GENERATED_ROOT}/${PKG_NAME}/pkg/kube/apisix"
 cp -r "${PROJECT_ROOT}/pkg/kube/apisix/client" "${GENERATED_ROOT}/${PKG_NAME}/pkg/kube/apisix"
+cp -r "${PROJECT_ROOT}/pkg/kube/apisix/apis" "${GENERATED_ROOT}/${PKG_NAME}/pkg/kube/apisix"
 
 cp_deepcopy() {
   local SRC_PATH="$1"
@@ -49,7 +50,7 @@ ret=0
 
 bash "${SCRIPT_ROOT}"/generate-groups.sh "deepcopy,client,informer,lister" \
   ${PKG_NAME}/pkg/kube/apisix/client ${PKG_NAME}/pkg/kube/apisix/apis \
-  config:v2beta3,v2beta2,v2beta1 ${PKG_NAME} \
+  config:v2 ${PKG_NAME} \
   --output-base "$GENERATED_ROOT" \
   --go-header-file "${SCRIPT_ROOT}"/boilerplate.go.txt \
   --verify-only || ret=$?
@@ -64,9 +65,18 @@ bash "${SCRIPT_ROOT}"/generate-groups.sh "deepcopy" \
   --verify-only|| ret=$?
 fi
 
+#if [[ $ret -eq 0 ]]; then
+#bash "${SCRIPT_ROOT}"/generate-groups.sh "register" \
+  #${PKG_NAME}/pkg/kube/apisix/apis ${PKG_NAME}/pkg/kube/apisix/apis \
+  #config:v2,v1 ${PKG_NAME} \
+  #--output-base "$GENERATED_ROOT" \
+  #--go-header-file "${SCRIPT_ROOT}"/boilerplate.go.txt \
+  #--verify-only|| ret=$?
+#fi
+
 if [[ $ret -eq 0 ]]; then
   echo "Generated codes up to date."
 else
-  echo "Generated codes out of date. Please run \`make codegen\`"
+  echo "Generated codes out of date. Please run \`make update-codegen\`"
   exit 1
 fi

@@ -19,10 +19,9 @@ package versioned
 
 import (
 	"fmt"
+	"net/http"
 
-	apisixv2beta1 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/clientset/versioned/typed/config/v2beta1"
-	apisixv2beta2 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/clientset/versioned/typed/config/v2beta2"
-	apisixv2beta3 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/clientset/versioned/typed/config/v2beta3"
+	apisixv2 "github.com/apache/apisix-ingress-controller/pkg/kube/apisix/client/clientset/versioned/typed/config/v2"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
@@ -30,33 +29,18 @@ import (
 
 type Interface interface {
 	Discovery() discovery.DiscoveryInterface
-	ApisixV2beta3() apisixv2beta3.ApisixV2beta3Interface
-	ApisixV2beta2() apisixv2beta2.ApisixV2beta2Interface
-	ApisixV2beta1() apisixv2beta1.ApisixV2beta1Interface
+	ApisixV2() apisixv2.ApisixV2Interface
 }
 
-// Clientset contains the clients for groups. Each group has exactly one
-// version included in a Clientset.
+// Clientset contains the clients for groups.
 type Clientset struct {
 	*discovery.DiscoveryClient
-	apisixV2beta3 *apisixv2beta3.ApisixV2beta3Client
-	apisixV2beta2 *apisixv2beta2.ApisixV2beta2Client
-	apisixV2beta1 *apisixv2beta1.ApisixV2beta1Client
+	apisixV2 *apisixv2.ApisixV2Client
 }
 
-// ApisixV2beta3 retrieves the ApisixV2beta3Client
-func (c *Clientset) ApisixV2beta3() apisixv2beta3.ApisixV2beta3Interface {
-	return c.apisixV2beta3
-}
-
-// ApisixV2beta2 retrieves the ApisixV2beta2Client
-func (c *Clientset) ApisixV2beta2() apisixv2beta2.ApisixV2beta2Interface {
-	return c.apisixV2beta2
-}
-
-// ApisixV2beta1 retrieves the ApisixV2beta1Client
-func (c *Clientset) ApisixV2beta1() apisixv2beta1.ApisixV2beta1Interface {
-	return c.apisixV2beta1
+// ApisixV2 retrieves the ApisixV2Client
+func (c *Clientset) ApisixV2() apisixv2.ApisixV2Interface {
+	return c.apisixV2
 }
 
 // Discovery retrieves the DiscoveryClient
@@ -70,7 +54,29 @@ func (c *Clientset) Discovery() discovery.DiscoveryInterface {
 // NewForConfig creates a new Clientset for the given config.
 // If config's RateLimiter is not set and QPS and Burst are acceptable,
 // NewForConfig will generate a rate-limiter in configShallowCopy.
+// NewForConfig is equivalent to NewForConfigAndClient(c, httpClient),
+// where httpClient was generated with rest.HTTPClientFor(c).
 func NewForConfig(c *rest.Config) (*Clientset, error) {
+	configShallowCopy := *c
+
+	if configShallowCopy.UserAgent == "" {
+		configShallowCopy.UserAgent = rest.DefaultKubernetesUserAgent()
+	}
+
+	// share the transport between all clients
+	httpClient, err := rest.HTTPClientFor(&configShallowCopy)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewForConfigAndClient(&configShallowCopy, httpClient)
+}
+
+// NewForConfigAndClient creates a new Clientset for the given config and http client.
+// Note the http client provided takes precedence over the configured transport values.
+// If config's RateLimiter is not set and QPS and Burst are acceptable,
+// NewForConfigAndClient will generate a rate-limiter in configShallowCopy.
+func NewForConfigAndClient(c *rest.Config, httpClient *http.Client) (*Clientset, error) {
 	configShallowCopy := *c
 	if configShallowCopy.RateLimiter == nil && configShallowCopy.QPS > 0 {
 		if configShallowCopy.Burst <= 0 {
@@ -78,22 +84,15 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 		}
 		configShallowCopy.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(configShallowCopy.QPS, configShallowCopy.Burst)
 	}
+
 	var cs Clientset
 	var err error
-	cs.apisixV2beta3, err = apisixv2beta3.NewForConfig(&configShallowCopy)
-	if err != nil {
-		return nil, err
-	}
-	cs.apisixV2beta2, err = apisixv2beta2.NewForConfig(&configShallowCopy)
-	if err != nil {
-		return nil, err
-	}
-	cs.apisixV2beta1, err = apisixv2beta1.NewForConfig(&configShallowCopy)
+	cs.apisixV2, err = apisixv2.NewForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err
 	}
 
-	cs.DiscoveryClient, err = discovery.NewDiscoveryClientForConfig(&configShallowCopy)
+	cs.DiscoveryClient, err = discovery.NewDiscoveryClientForConfigAndClient(&configShallowCopy, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -103,21 +102,17 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 // NewForConfigOrDie creates a new Clientset for the given config and
 // panics if there is an error in the config.
 func NewForConfigOrDie(c *rest.Config) *Clientset {
-	var cs Clientset
-	cs.apisixV2beta3 = apisixv2beta3.NewForConfigOrDie(c)
-	cs.apisixV2beta2 = apisixv2beta2.NewForConfigOrDie(c)
-	cs.apisixV2beta1 = apisixv2beta1.NewForConfigOrDie(c)
-
-	cs.DiscoveryClient = discovery.NewDiscoveryClientForConfigOrDie(c)
-	return &cs
+	cs, err := NewForConfig(c)
+	if err != nil {
+		panic(err)
+	}
+	return cs
 }
 
 // New creates a new Clientset for the given RESTClient.
 func New(c rest.Interface) *Clientset {
 	var cs Clientset
-	cs.apisixV2beta3 = apisixv2beta3.New(c)
-	cs.apisixV2beta2 = apisixv2beta2.New(c)
-	cs.apisixV2beta1 = apisixv2beta1.New(c)
+	cs.apisixV2 = apisixv2.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)
 	return &cs

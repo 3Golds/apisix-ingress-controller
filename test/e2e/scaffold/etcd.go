@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,9 +18,13 @@ import (
 	"fmt"
 
 	"github.com/gruntwork-io/terratest/modules/k8s"
-	"github.com/onsi/ginkgo"
+	ginkgo "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	EtcdServiceName = "etcd-service-e2e-test"
 )
 
 var (
@@ -65,7 +69,7 @@ spec:
             tcpSocket:
               port: 2379
             timeoutSeconds: 2
-          image: "localhost:5000/bitnami/etcd:3.4.14-debian-10-r0"
+          image: "localhost:5000/etcd:dev"
           imagePullPolicy: IfNotPresent
           name: etcd-deployment-e2e-test
           ports:
@@ -74,11 +78,11 @@ spec:
               protocol: "TCP"
 `
 
-	etcdService = `
+	etcdService = fmt.Sprintf(`
 apiVersion: v1
 kind: Service
 metadata:
-  name: etcd-service-e2e-test
+  name: %s
 spec:
   selector:
     app: etcd-deployment-e2e-test
@@ -88,21 +92,20 @@ spec:
       protocol: TCP
       targetPort: 2379
   type: ClusterIP
-`
+`, EtcdServiceName)
 )
 
 func (s *Scaffold) newEtcd() (*corev1.Service, error) {
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, etcdDeployment); err != nil {
+	if err := s.CreateResourceFromString(s.FormatRegistry(etcdDeployment)); err != nil {
 		return nil, err
 	}
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, etcdService); err != nil {
+	if err := s.CreateResourceFromString(etcdService); err != nil {
 		return nil, err
 	}
-	svc, err := k8s.GetServiceE(s.t, s.kubectlOptions, "etcd-service-e2e-test")
+	svc, err := k8s.GetServiceE(s.t, s.kubectlOptions, EtcdServiceName)
 	if err != nil {
 		return nil, err
 	}
-	s.EtcdServiceFQDN = fmt.Sprintf("etcd-service-e2e-test.%s.svc.cluster.local", svc.Namespace)
 	return svc, nil
 }
 

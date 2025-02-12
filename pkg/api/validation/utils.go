@@ -40,7 +40,7 @@ var (
 // It can query the schema of objects from APISIX.
 func GetSchemaClient(co *apisix.ClusterOptions) (apisix.Schema, error) {
 	once.Do(func() {
-		client, err := apisix.NewClient()
+		client, err := apisix.NewClient(co.AdminAPIVersion)
 		if err != nil {
 			onceErr = err
 			return
@@ -89,24 +89,38 @@ func validateSchema(schemaLoader *gojsonschema.JSONLoader, obj interface{}) (boo
 		return true, nil
 	}
 
-	log.Warn("the given document is not valid. see errors:\n")
 	var resultErr error
-	resultErr = multierror.Append(resultErr, fmt.Errorf("the given document is not valid"))
 	for _, desc := range result.Errors() {
-		resultErr = multierror.Append(resultErr, fmt.Errorf("%s", desc.Description()))
-		log.Warnf("- %s", desc)
+		resultErr = multierror.Append(resultErr, fmt.Errorf("- %s", desc.String()))
 	}
-
 	return false, resultErr
 }
 
-func HasValueInSyncMap(m *sync.Map) bool {
-	hasValue := false
-	if m != nil {
-		m.Range(func(k, v interface{}) bool {
-			hasValue = true
-			return false
-		})
+func ValidatePlugin(client apisix.Schema, pluginName string, pluginConfig interface{}) (valid bool, resultErr error) {
+	valid = true
+
+	pluginSchema, err := client.GetPluginSchema(context.TODO(), pluginName)
+	if err != nil {
+		resultErr = fmt.Errorf("failed to get the schema of plugin %s: %s", pluginName, err)
+		log.Error(resultErr)
+		valid = false
+		return
 	}
-	return hasValue
+
+	pluginSchemaLoader := gojsonschema.NewStringLoader(pluginSchema.Content)
+	if _, err := validateSchema(&pluginSchemaLoader, pluginConfig); err != nil {
+		valid = false
+		resultErr = multierror.Append(resultErr, fmt.Errorf("%s plugin's config is invalid", pluginName))
+		resultErr = multierror.Append(resultErr, err)
+		log.Warn(resultErr)
+	}
+
+	return
+}
+
+func validateIngressClassName(oldIngressClassName, newIngressClass string) (bool, error) {
+	if oldIngressClassName != "" && oldIngressClassName != newIngressClass {
+		return false, fmt.Errorf("The ingressClassName field is not allowed to be modified.")
+	}
+	return true, nil
 }

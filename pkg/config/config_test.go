@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,7 +16,6 @@ package config
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -28,35 +27,48 @@ import (
 
 func TestNewConfigFromFile(t *testing.T) {
 	cfg := &Config{
-		LogLevel:              "warn",
-		LogOutput:             "stdout",
-		HTTPListen:            ":9090",
-		HTTPSListen:           ":9443",
-		IngressPublishService: "",
-		IngressStatusAddress:  []string{},
-		CertFilePath:          "/etc/webhook/certs/cert.pem",
-		KeyFilePath:           "/etc/webhook/certs/key.pem",
-		EnableProfiling:       true,
+		LogLevel:                     "warn",
+		LogOutput:                    "stdout",
+		LogRotateOutputPath:          "",
+		LogRotationMaxSize:           100,
+		LogRotationMaxAge:            0,
+		LogRotationMaxBackups:        0,
+		HTTPListen:                   ":9090",
+		HTTPSListen:                  ":9443",
+		IngressPublishService:        "",
+		IngressStatusAddress:         []string{},
+		CertFilePath:                 "/etc/webhook/certs/cert.pem",
+		KeyFilePath:                  "/etc/webhook/certs/key.pem",
+		EnableProfiling:              true,
+		ApisixResourceSyncInterval:   types.TimeDuration{Duration: 200 * time.Second},
+		ApisixResourceSyncComparison: true,
 		Kubernetes: KubernetesConfig{
-			ResyncInterval:     types.TimeDuration{Duration: time.Hour},
-			Kubeconfig:         "/path/to/foo/baz",
-			AppNamespaces:      []string{""},
-			ElectionID:         "my-election-id",
-			IngressClass:       IngressClass,
-			IngressVersion:     IngressNetworkingV1,
-			ApisixRouteVersion: ApisixRouteV2beta3,
+			ResyncInterval:       types.TimeDuration{Duration: time.Hour},
+			Kubeconfig:           "/path/to/foo/baz",
+			ElectionID:           "my-election-id",
+			IngressClass:         IngressClass,
+			IngressVersion:       IngressNetworkingV1,
+			APIVersion:           DefaultAPIVersion,
+			DisableStatusUpdates: true,
 		},
 		APISIX: APISIXConfig{
-			DefaultClusterName:     "default",
+			AdminAPIVersion:        "v2",
+			DefaultClusterName:     "apisix",
 			DefaultClusterBaseURL:  "http://127.0.0.1:8080/apisix",
 			DefaultClusterAdminKey: "123456",
+		},
+		EtcdServer: EtcdServerConfig{
+			Enabled:           false,
+			Prefix:            "/apisix",
+			ListenAddress:     ":12379",
+			SSLKeyEncryptSalt: "edd1c9f0985e76a2",
 		},
 	}
 
 	jsonData, err := json.Marshal(cfg)
 	assert.Nil(t, err, "failed to marshal config to json: %s", err)
 
-	tmpJSON, err := ioutil.TempFile("/tmp", "config-*.json")
+	tmpJSON, err := os.CreateTemp("/tmp", "config-*.json")
 	assert.Nil(t, err, "failed to create temporary json configuration file: ", err)
 	defer os.Remove(tmpJSON.Name())
 
@@ -82,17 +94,27 @@ https_listen: :9443
 ingress_publish_service: ""
 ingress_status_address: []
 enable_profiling: true
+apisix_resource_sync_interval: 200s
 kubernetes:
   kubeconfig: /path/to/foo/baz
   resync_interval: 1h0m0s
   election_id: my-election-id
   ingress_class: apisix
   ingress_version: networking/v1
+  api_version: apisix.apache.org/v2
+  disable_status_updates: true
 apisix:
+  admin_api_version: v2
   default_cluster_base_url: http://127.0.0.1:8080/apisix
   default_cluster_admin_key: "123456"
+  default_cluster_name: "apisix"
+etcdserver:
+  enabled: false
+  prefix: /apisix
+  listen_address: :12379
+  ssl_key_encrypt_salt: edd1c9f0985e76a2
 `
-	tmpYAML, err := ioutil.TempFile("/tmp", "config-*.yaml")
+	tmpYAML, err := os.CreateTemp("/tmp", "config-*.yaml")
 	assert.Nil(t, err, "failed to create temporary yaml configuration file: ", err)
 	defer os.Remove(tmpYAML.Name())
 
@@ -109,39 +131,54 @@ apisix:
 
 func TestConfigWithEnvVar(t *testing.T) {
 	cfg := &Config{
-		LogLevel:              "warn",
-		LogOutput:             "stdout",
-		HTTPListen:            ":9090",
-		HTTPSListen:           ":9443",
-		IngressPublishService: "",
-		IngressStatusAddress:  []string{},
-		CertFilePath:          "/etc/webhook/certs/cert.pem",
-		KeyFilePath:           "/etc/webhook/certs/key.pem",
-		EnableProfiling:       true,
+		LogLevel:                     "warn",
+		LogOutput:                    "stdout",
+		LogRotateOutputPath:          "",
+		LogRotationMaxSize:           100,
+		LogRotationMaxAge:            0,
+		LogRotationMaxBackups:        0,
+		HTTPListen:                   ":9090",
+		HTTPSListen:                  ":9443",
+		IngressPublishService:        "",
+		IngressStatusAddress:         []string{},
+		CertFilePath:                 "/etc/webhook/certs/cert.pem",
+		KeyFilePath:                  "/etc/webhook/certs/key.pem",
+		EnableProfiling:              true,
+		ApisixResourceSyncInterval:   types.TimeDuration{Duration: 200 * time.Second},
+		ApisixResourceSyncComparison: true,
 		Kubernetes: KubernetesConfig{
-			ResyncInterval:     types.TimeDuration{Duration: time.Hour},
-			Kubeconfig:         "",
-			AppNamespaces:      []string{""},
-			ElectionID:         "my-election-id",
-			IngressClass:       IngressClass,
-			IngressVersion:     IngressNetworkingV1,
-			ApisixRouteVersion: ApisixRouteV2beta3,
+			ResyncInterval:       types.TimeDuration{Duration: time.Hour},
+			Kubeconfig:           "",
+			ElectionID:           "my-election-id",
+			IngressClass:         IngressClass,
+			IngressVersion:       IngressNetworkingV1,
+			APIVersion:           DefaultAPIVersion,
+			DisableStatusUpdates: true,
 		},
 		APISIX: APISIXConfig{
-			DefaultClusterName:     "default",
+			AdminAPIVersion:        "v2",
+			DefaultClusterName:     "apisix",
 			DefaultClusterBaseURL:  "http://127.0.0.1:8080/apisix",
 			DefaultClusterAdminKey: "123456",
+		},
+		EtcdServer: EtcdServerConfig{
+			Enabled:           false,
+			Prefix:            "/apisix",
+			ListenAddress:     ":12379",
+			SSLKeyEncryptSalt: "edd1c9f0985e76a2",
 		},
 	}
 
 	defaultClusterBaseURLEnvName := "DEFAULT_CLUSTER_BASE_URL"
 	defaultClusterAdminKeyEnvName := "DEFAULT_CLUSTER_ADMIN_KEY"
+	defaultClusterNameEnvName := "DEFAULT_CLUSTER_NAME"
 	kubeconfigEnvName := "KUBECONFIG"
 
 	err := os.Setenv(defaultClusterBaseURLEnvName, "http://127.0.0.1:8080/apisix")
 	assert.Nil(t, err, "failed to set env variable: ", err)
 	_ = os.Setenv(defaultClusterAdminKeyEnvName, "123456")
 	_ = os.Setenv(kubeconfigEnvName, "")
+	_ = os.Setenv(defaultClusterNameEnvName, "apisix")
 
 	jsonData := `
 {
@@ -152,20 +189,31 @@ func TestConfigWithEnvVar(t *testing.T) {
 	"ingress_publish_service": "",
 	"ingress_status_address": [],
     "enable_profiling": true,
+	"apisix_resource_sync_interval": "200s",
+	"apisix_resource_sync_comparison": true,
     "kubernetes": {
         "kubeconfig": "{{.KUBECONFIG}}",
         "resync_interval": "1h0m0s",
         "election_id": "my-election-id",
         "ingress_class": "apisix",
-        "ingress_version": "networking/v1"
+        "ingress_version": "networking/v1",
+        "disable_status_updates": true
     },
     "apisix": {
+        "admin_api_version": "v2",
         "default_cluster_base_url": "{{.DEFAULT_CLUSTER_BASE_URL}}",
-        "default_cluster_admin_key": "{{.DEFAULT_CLUSTER_ADMIN_KEY}}"
-    }
+        "default_cluster_admin_key": "{{.DEFAULT_CLUSTER_ADMIN_KEY}}",
+        "default_cluster_name": "{{.DEFAULT_CLUSTER_NAME}}"
+    },
+	"etcdserver": {
+		"enabled": false,
+		"prefix": "/apisix",
+		"listen_address": ":12379",
+		"ssl_key_encrypt_salt": "edd1c9f0985e76a2"
+	}
 }
 `
-	tmpJSON, err := ioutil.TempFile("/tmp", "config-*.json")
+	tmpJSON, err := os.CreateTemp("/tmp", "config-*.json")
 	assert.Nil(t, err, "failed to create temporary json configuration file: ", err)
 	defer os.Remove(tmpJSON.Name())
 
@@ -187,17 +235,21 @@ https_listen: :9443
 ingress_publish_service: ""
 ingress_status_address: []
 enable_profiling: true
+apisix_resource_sync_interval: 200s
 kubernetes:
   resync_interval: 1h0m0s
   kubeconfig: "{{.KUBECONFIG}}"
   election_id: my-election-id
   ingress_class: apisix
   ingress_version: networking/v1
+  disable_status_updates: true
 apisix:
+  admin_api_version: v2
   default_cluster_base_url: {{.DEFAULT_CLUSTER_BASE_URL}}
   default_cluster_admin_key: "{{.DEFAULT_CLUSTER_ADMIN_KEY}}"
+  default_cluster_name: "{{.DEFAULT_CLUSTER_NAME}}"
 `
-	tmpYAML, err := ioutil.TempFile("/tmp", "config-*.yaml")
+	tmpYAML, err := os.CreateTemp("/tmp", "config-*.yaml")
 	assert.Nil(t, err, "failed to create temporary yaml configuration file: ", err)
 	defer os.Remove(tmpYAML.Name())
 
@@ -225,7 +277,7 @@ func TestConfigDefaultValue(t *testing.T) {
 apisix:
   default_cluster_base_url: http://127.0.0.1:8080/apisix
 `
-	tmpYAML, err := ioutil.TempFile("/tmp", "config-*.yaml")
+	tmpYAML, err := os.CreateTemp("/tmp", "config-*.yaml")
 	assert.Nil(t, err, "failed to create temporary yaml configuration file: ", err)
 	defer os.Remove(tmpYAML.Name())
 
@@ -246,7 +298,7 @@ apisix:
 
 func TestConfigInvalidation(t *testing.T) {
 	yamlData := ``
-	tmpYAML, err := ioutil.TempFile("/tmp", "config-*.yaml")
+	tmpYAML, err := os.CreateTemp("/tmp", "config-*.yaml")
 	assert.Nil(t, err, "failed to create temporary yaml configuration file: ", err)
 	defer os.Remove(tmpYAML.Name())
 
@@ -264,9 +316,9 @@ func TestConfigInvalidation(t *testing.T) {
 kubernetes:
   resync_interval: 15s
 apisix:
-  base_url: http://127.0.0.1:1234/apisix
+  default_cluster_base_url: http://127.0.0.1:1234/apisix
 `
-	tmpYAML, err = ioutil.TempFile("/tmp", "config-*.yaml")
+	tmpYAML, err = os.CreateTemp("/tmp", "config-*.yaml")
 	assert.Nil(t, err, "failed to create temporary yaml configuration file: ", err)
 	defer os.Remove(tmpYAML.Name())
 

@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,23 +15,26 @@
 package scaffold
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/apache/apisix-ingress-controller/pkg/metrics"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/apache/apisix-ingress-controller/pkg/apisix"
+	"github.com/apache/apisix-ingress-controller/pkg/log"
+	"github.com/apache/apisix-ingress-controller/pkg/metrics"
 	v1 "github.com/apache/apisix-ingress-controller/pkg/types/apisix/v1"
 	"github.com/gruntwork-io/terratest/modules/k8s"
 	"github.com/gruntwork-io/terratest/modules/retry"
 	"github.com/gruntwork-io/terratest/modules/testing"
-	"github.com/onsi/ginkgo"
+	ginkgo "github.com/onsi/ginkgo/v2"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,6 +44,10 @@ import (
 
 type counter struct {
 	Count intOrDescOneString `json:"count"`
+}
+
+type counterV3 struct {
+	Total intOrDescOneString `json:"total"`
 }
 
 // intOrDescOneString will decrease 1 if incoming value is string formatted number
@@ -104,7 +111,7 @@ func (s *Scaffold) CreateApisixRoute(name string, rules []ApisixRouteRule) {
 	route := &apisixRoute{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ApisixRoute",
-			APIVersion: "apisix.apache.org/v1",
+			APIVersion: s.opts.ApisixResourceVersion,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
@@ -121,8 +128,43 @@ func (s *Scaffold) CreateApisixRoute(name string, rules []ApisixRouteRule) {
 // CreateResourceFromString creates resource from a loaded yaml string.
 func (s *Scaffold) CreateResourceFromString(yaml string) error {
 	err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, yaml)
-	time.Sleep(5 * time.Second)
+	// if the error raised, it may be a &shell.ErrWithCmdOutput, which is useless in debug
+	if err != nil {
+		err = fmt.Errorf(err.Error())
+	}
 	return err
+}
+
+func (s *Scaffold) DeleteResourceFromString(yaml string) error {
+	return k8s.KubectlDeleteFromStringE(s.t, s.kubectlOptions, yaml)
+}
+
+func (s *Scaffold) Exec(podName, containerName string, args ...string) (string, error) {
+	cmdArgs := []string{}
+
+	if s.kubectlOptions.ContextName != "" {
+		cmdArgs = append(cmdArgs, "--context", s.kubectlOptions.ContextName)
+	}
+	if s.kubectlOptions.ConfigPath != "" {
+		cmdArgs = append(cmdArgs, "--kubeconfig", s.kubectlOptions.ConfigPath)
+	}
+	if s.kubectlOptions.Namespace != "" {
+		cmdArgs = append(cmdArgs, "--namespace", s.kubectlOptions.Namespace)
+	}
+
+	cmdArgs = append(cmdArgs, "exec")
+	cmdArgs = append(cmdArgs, "-i")
+	cmdArgs = append(cmdArgs, podName)
+	cmdArgs = append(cmdArgs, "-c")
+	cmdArgs = append(cmdArgs, containerName)
+	cmdArgs = append(cmdArgs, "--", "sh", "-c")
+	cmdArgs = append(cmdArgs, args...)
+
+	log.Infof("running command: kubectl %v", strings.Join(cmdArgs, " "))
+
+	output, err := exec.Command("kubectl", cmdArgs...).Output()
+
+	return strings.TrimSuffix(string(output), "\n"), err
 }
 
 func (s *Scaffold) GetOutputFromString(shell ...string) (string, error) {
@@ -160,14 +202,18 @@ func (s *Scaffold) CreateResourceFromStringWithNamespace(yaml, namespace string)
 		s.kubectlOptions.Namespace = originalNamespace
 	}()
 	s.addFinalizers(func() {
-		originalNamespace := s.kubectlOptions.Namespace
-		s.kubectlOptions.Namespace = namespace
-		defer func() {
-			s.kubectlOptions.Namespace = originalNamespace
-		}()
-		assert.Nil(s.t, k8s.KubectlDeleteFromStringE(s.t, s.kubectlOptions, yaml))
+		_ = s.DeleteResourceFromStringWithNamespace(yaml, namespace)
 	})
-	return k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, yaml)
+	return s.CreateResourceFromString(yaml)
+}
+
+func (s *Scaffold) DeleteResourceFromStringWithNamespace(yaml, namespace string) error {
+	originalNamespace := s.kubectlOptions.Namespace
+	s.kubectlOptions.Namespace = namespace
+	defer func() {
+		s.kubectlOptions.Namespace = originalNamespace
+	}()
+	return k8s.KubectlDeleteFromStringE(s.t, s.kubectlOptions, yaml)
 }
 
 func (s *Scaffold) ensureNumApisixCRDsCreated(url string, desired int) error {
@@ -188,16 +234,27 @@ func (s *Scaffold) ensureNumApisixCRDsCreated(url string, desired int) error {
 			ginkgo.GinkgoT().Logf("got status code %d from APISIX", resp.StatusCode)
 			return false, nil
 		}
-		var c counter
-		b, err := ioutil.ReadAll(resp.Body)
+		var count int
+		b, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return false, err
 		}
-		err = json.Unmarshal(b, &c)
-		if err != nil {
-			return false, err
+
+		if s.opts.APISIXAdminAPIVersion == "v3" {
+			var c counterV3
+			err = json.Unmarshal(b, &c)
+			if err != nil {
+				return false, err
+			}
+			count = c.Total.Value
+		} else {
+			var c counter
+			err = json.Unmarshal(b, &c)
+			if err != nil {
+				return false, err
+			}
+			count = c.Count.Value
 		}
-		count := c.Count.Value
 		if count != desired {
 			ginkgo.GinkgoT().Logf("mismatched number of items, expected %d but found %d", desired, count)
 			return false, nil
@@ -205,6 +262,17 @@ func (s *Scaffold) ensureNumApisixCRDsCreated(url string, desired int) error {
 		return true, nil
 	}
 	return wait.Poll(3*time.Second, 35*time.Second, condFunc)
+}
+
+// EnsureNumApisixConsumersCreated waits until desired number of Consumers are created in
+// APISIX cluster.
+func (s *Scaffold) EnsureNumApisixConsumersCreated(desired int) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/consumers",
+	}
+	return s.ensureNumApisixCRDsCreated(u.String(), desired)
 }
 
 // EnsureNumApisixRoutesCreated waits until desired number of Routes are created in
@@ -240,6 +308,118 @@ func (s *Scaffold) EnsureNumApisixUpstreamsCreated(desired int) error {
 	return s.ensureNumApisixCRDsCreated(u.String(), desired)
 }
 
+// EnsureNumApisixPluginConfigCreated waits until desired number of PluginConfig are created in
+// APISIX cluster.
+func (s *Scaffold) EnsureNumApisixPluginConfigCreated(desired int) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/plugin_configs",
+	}
+	return s.ensureNumApisixCRDsCreated(u.String(), desired)
+}
+
+// EnsureNumApisixTlsCreated waits until desired number of tls ssl created in
+// APISIX cluster.
+func (s *Scaffold) EnsureNumApisixTlsCreated(desired int) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/ssl",
+	}
+	if s.opts.APISIXAdminAPIVersion == "v3" {
+		u.Path = "/apisix/admin/ssls"
+	}
+	return s.ensureNumApisixCRDsCreated(u.String(), desired)
+}
+
+// EnsureNumListUpstreamNodesNth waits until desired number of upstreams[n-1].Nodes created in
+// APISIX cluster.
+// The upstreams[n-1].Nodes number is equal to desired.
+func (s *Scaffold) EnsureNumListUpstreamNodesNth(n, desired int) error {
+	condFunc := func() (bool, error) {
+		ups, err := s.ListApisixUpstreams()
+		if err != nil || len(ups) < n || len(ups[n-1].Nodes) != desired {
+			return false, fmt.Errorf("EnsureNumListUpstreamNodes failed")
+		}
+		return true, nil
+	}
+	return wait.Poll(3*time.Second, 35*time.Second, condFunc)
+}
+
+// CreateApisixRouteByApisixAdmin create or update a route
+func (s *Scaffold) CreateApisixRouteByApisixAdmin(routeID string, body []byte) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/routes/" + routeID,
+	}
+	return s.ensureAdminOperationIsSuccessful(u.String(), "PUT", body)
+}
+
+// CreateApisixRouteByApisixAdmin create or update a consumer
+func (s *Scaffold) CreateApisixConsumerByApisixAdmin(body []byte) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/consumers",
+	}
+	return s.ensureAdminOperationIsSuccessful(u.String(), "PUT", body)
+}
+
+func (s *Scaffold) CreateApisixPluginMetadataByApisixAdmin(pluginName string, body []byte) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/plugin_metadata/" + pluginName,
+	}
+	return s.ensureAdminOperationIsSuccessful(u.String(), "PUT", body)
+}
+
+// DeleteApisixRouteByApisixAdmin deletes a route by its route name in APISIX cluster.
+func (s *Scaffold) DeleteApisixRouteByApisixAdmin(routeID string) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/routes/" + routeID,
+	}
+	return s.ensureAdminOperationIsSuccessful(u.String(), "DELETE", nil)
+}
+
+// DeleteApisixConsumerByApisixAdmin deletes a consumer by its consumer name in APISIX cluster.
+func (s *Scaffold) DeleteApisixConsumerByApisixAdmin(consumerName string) error {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin/consumers/" + consumerName,
+	}
+	return s.ensureAdminOperationIsSuccessful(u.String(), "DELETE", nil)
+}
+
+func (s *Scaffold) ensureAdminOperationIsSuccessful(url, method string, body []byte) error {
+	condFunc := func() (bool, error) {
+		req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+		if err != nil {
+			return false, err
+		}
+		if s.opts.APISIXAdminAPIKey != "" {
+			req.Header.Set("X-API-Key", s.opts.APISIXAdminAPIKey)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			ginkgo.GinkgoT().Logf("failed to delete resources from APISIX: %s", err.Error())
+			return false, nil
+		}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			ginkgo.GinkgoT().Logf("got status code %d from APISIX", resp.StatusCode)
+			return false, nil
+		}
+		return true, nil
+	}
+	return wait.Poll(3*time.Second, 35*time.Second, condFunc)
+}
+
 // GetServerInfo collect server info from "/v1/server_info" (Control API) exposed by server-info plugin
 func (s *Scaffold) GetServerInfo() (map[string]interface{}, error) {
 	u := url.URL{
@@ -265,6 +445,10 @@ func (s *Scaffold) GetServerInfo() (map[string]interface{}, error) {
 	return ret, nil
 }
 
+func (s *Scaffold) NewAPISIX() (apisix.APISIX, error) {
+	return apisix.NewClient(s.opts.APISIXAdminAPIVersion)
+}
+
 // ListApisixUpstreams list all upstreams from APISIX
 func (s *Scaffold) ListApisixUpstreams() ([]*v1.Upstream, error) {
 	u := url.URL{
@@ -272,7 +456,7 @@ func (s *Scaffold) ListApisixUpstreams() ([]*v1.Upstream, error) {
 		Host:   s.apisixAdminTunnel.Endpoint(),
 		Path:   "/apisix/admin",
 	}
-	cli, err := apisix.NewClient()
+	cli, err := s.NewAPISIX()
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +478,7 @@ func (s *Scaffold) ListApisixGlobalRules() ([]*v1.GlobalRule, error) {
 		Host:   s.apisixAdminTunnel.Endpoint(),
 		Path:   "/apisix/admin",
 	}
-	cli, err := apisix.NewClient()
+	cli, err := s.NewAPISIX()
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +500,7 @@ func (s *Scaffold) ListApisixRoutes() ([]*v1.Route, error) {
 		Host:   s.apisixAdminTunnel.Endpoint(),
 		Path:   "/apisix/admin",
 	}
-	cli, err := apisix.NewClient()
+	cli, err := s.NewAPISIX()
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +515,48 @@ func (s *Scaffold) ListApisixRoutes() ([]*v1.Route, error) {
 	return cli.Cluster("").Route().List(context.TODO())
 }
 
+func (s *Scaffold) ListPluginMetadatas() ([]*v1.PluginMetadata, error) {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin",
+	}
+	cli, err := s.NewAPISIX()
+	if err != nil {
+		return nil, err
+	}
+	err = cli.AddCluster(context.Background(), &apisix.ClusterOptions{
+		BaseURL:          u.String(),
+		AdminKey:         s.opts.APISIXAdminAPIKey,
+		MetricsCollector: metrics.NewPrometheusCollector(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cli.Cluster("").PluginMetadata().List(context.TODO())
+}
+
+func (s *Scaffold) ClusterClient() (apisix.Cluster, error) {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin",
+	}
+	cli, err := s.NewAPISIX()
+	if err != nil {
+		return nil, err
+	}
+	err = cli.AddCluster(context.Background(), &apisix.ClusterOptions{
+		BaseURL:          u.String(),
+		AdminKey:         s.opts.APISIXAdminAPIKey,
+		MetricsCollector: metrics.NewPrometheusCollector(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cli.Cluster(""), nil
+}
+
 // ListApisixConsumers list all consumers from APISIX.
 func (s *Scaffold) ListApisixConsumers() ([]*v1.Consumer, error) {
 	u := url.URL{
@@ -338,7 +564,7 @@ func (s *Scaffold) ListApisixConsumers() ([]*v1.Consumer, error) {
 		Host:   s.apisixAdminTunnel.Endpoint(),
 		Path:   "apisix/admin",
 	}
-	cli, err := apisix.NewClient()
+	cli, err := s.NewAPISIX()
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +586,7 @@ func (s *Scaffold) ListApisixStreamRoutes() ([]*v1.StreamRoute, error) {
 		Host:   s.apisixAdminTunnel.Endpoint(),
 		Path:   "/apisix/admin",
 	}
-	cli, err := apisix.NewClient()
+	cli, err := s.NewAPISIX()
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +608,7 @@ func (s *Scaffold) ListApisixSsl() ([]*v1.Ssl, error) {
 		Host:   s.apisixAdminTunnel.Endpoint(),
 		Path:   "/apisix/admin",
 	}
-	cli, err := apisix.NewClient()
+	cli, err := s.NewAPISIX()
 	if err != nil {
 		return nil, err
 	}
@@ -397,20 +623,44 @@ func (s *Scaffold) ListApisixSsl() ([]*v1.Ssl, error) {
 	return cli.Cluster("").SSL().List(context.TODO())
 }
 
+// ListApisixRoutes list all pluginConfigs from APISIX.
+func (s *Scaffold) ListApisixPluginConfig() ([]*v1.PluginConfig, error) {
+	u := url.URL{
+		Scheme: "http",
+		Host:   s.apisixAdminTunnel.Endpoint(),
+		Path:   "/apisix/admin",
+	}
+	cli, err := s.NewAPISIX()
+	if err != nil {
+		return nil, err
+	}
+	err = cli.AddCluster(context.Background(), &apisix.ClusterOptions{
+		BaseURL:          u.String(),
+		AdminKey:         s.opts.APISIXAdminAPIKey,
+		MetricsCollector: metrics.NewPrometheusCollector(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cli.Cluster("").PluginConfig().List(context.TODO())
+}
+
 func (s *Scaffold) newAPISIXTunnels() error {
 	var (
-		adminNodePort   int
-		httpNodePort    int
-		httpsNodePort   int
-		tcpNodePort     int
-		udpNodePort     int
-		controlNodePort int
-		adminPort       int
-		httpPort        int
-		httpsPort       int
-		tcpPort         int
-		udpPort         int
-		controlPort     int
+		adminNodePort      int
+		httpNodePort       int
+		httpsNodePort      int
+		tcpNodePort        int
+		tlsOverTcpNodePort int
+		udpNodePort        int
+		controlNodePort    int
+		adminPort          int
+		httpPort           int
+		httpsPort          int
+		tcpPort            int
+		tlsOverTcpPort     int
+		udpPort            int
+		controlPort        int
 	)
 	for _, port := range s.apisixService.Spec.Ports {
 		if port.Name == "http" {
@@ -425,6 +675,9 @@ func (s *Scaffold) newAPISIXTunnels() error {
 		} else if port.Name == "tcp" {
 			tcpNodePort = int(port.NodePort)
 			tcpPort = int(port.Port)
+		} else if port.Name == "tcp-tls" {
+			tlsOverTcpNodePort = int(port.NodePort)
+			tlsOverTcpPort = int(port.Port)
 		} else if port.Name == "udp" {
 			udpNodePort = int(port.NodePort)
 			udpPort = int(port.Port)
@@ -442,6 +695,8 @@ func (s *Scaffold) newAPISIXTunnels() error {
 		httpsNodePort, httpsPort)
 	s.apisixTCPTunnel = k8s.NewTunnel(s.kubectlOptions, k8s.ResourceTypeService, "apisix-service-e2e-test",
 		tcpNodePort, tcpPort)
+	s.apisixTLSOverTCPTunnel = k8s.NewTunnel(s.kubectlOptions, k8s.ResourceTypeService, "apisix-service-e2e-test",
+		tlsOverTcpNodePort, tlsOverTcpPort)
 	s.apisixUDPTunnel = k8s.NewTunnel(s.kubectlOptions, k8s.ResourceTypeService, "apisix-service-e2e-test",
 		udpNodePort, udpPort)
 	s.apisixControlTunnel = k8s.NewTunnel(s.kubectlOptions, k8s.ResourceTypeService, "apisix-service-e2e-test",
@@ -463,6 +718,10 @@ func (s *Scaffold) newAPISIXTunnels() error {
 		return err
 	}
 	s.addFinalizers(s.apisixTCPTunnel.Close)
+	if err := s.apisixTLSOverTCPTunnel.ForwardPortE(s.t); err != nil {
+		return err
+	}
+	s.addFinalizers(s.apisixTLSOverTCPTunnel.Close)
 	if err := s.apisixUDPTunnel.ForwardPortE(s.t); err != nil {
 		return err
 	}
@@ -471,7 +730,18 @@ func (s *Scaffold) newAPISIXTunnels() error {
 		return err
 	}
 	s.addFinalizers(s.apisixControlTunnel.Close)
+
 	return nil
+}
+
+func (s *Scaffold) shutdownApisixTunnel() {
+	s.apisixAdminTunnel.Close()
+	s.apisixHttpTunnel.Close()
+	s.apisixHttpsTunnel.Close()
+	s.apisixTCPTunnel.Close()
+	s.apisixTLSOverTCPTunnel.Close()
+	s.apisixUDPTunnel.Close()
+	s.apisixControlTunnel.Close()
 }
 
 // Namespace returns the current working namespace.
@@ -487,7 +757,7 @@ func (s *Scaffold) EnsureNumEndpointsReady(t testing.TestingT, endpointsName str
 		t,
 		statusMsg,
 		20,
-		5*time.Second,
+		2*time.Second,
 		func() (string, error) {
 			endpoints, err := e.CoreV1().Endpoints(s.Namespace()).Get(context.Background(), endpointsName, metav1.GetOptions{})
 			if err != nil {
@@ -500,7 +770,7 @@ func (s *Scaffold) EnsureNumEndpointsReady(t testing.TestingT, endpointsName str
 			if readyNum == desired {
 				return "Service is now available", nil
 			}
-			return fmt.Sprintf("Endpoints not ready yet, expect %v, actual %v", desired, readyNum), nil
+			return "failed", fmt.Errorf("endpoints not ready yet, expect %v, actual %v", desired, readyNum)
 		},
 	)
 	ginkgo.GinkgoT().Log(message)
@@ -511,4 +781,23 @@ func (s *Scaffold) GetKubernetesClient() *kubernetes.Clientset {
 	client, err := k8s.GetKubernetesClientFromOptionsE(s.t, s.kubectlOptions)
 	assert.Nil(ginkgo.GinkgoT(), err, "get kubernetes client")
 	return client
+}
+
+func (s *Scaffold) RunKubectlAndGetOutput(args ...string) (string, error) {
+	return k8s.RunKubectlAndGetOutputE(ginkgo.GinkgoT(), s.kubectlOptions, args...)
+}
+
+func (s *Scaffold) RunDigDNSClientFromK8s(args ...string) (string, error) {
+	kubectlArgs := []string{
+		"run",
+		"dig",
+		"-i",
+		"--rm",
+		"--restart=Never",
+		"--image-pull-policy=IfNotPresent",
+		"--image=toolbelt/dig",
+		"--",
+	}
+	kubectlArgs = append(kubectlArgs, args...)
+	return s.RunKubectlAndGetOutput(kubectlArgs...)
 }

@@ -5,7 +5,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/gruntwork-io/terratest/modules/k8s"
-	"github.com/onsi/ginkgo"
+	ginkgo "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -46,7 +46,7 @@ spec:
       app: apisix-deployment-e2e-test
   strategy:
     rollingUpdate:
-      maxSurge: 50%
+      maxSurge: 50%%
       maxUnavailable: 1
     type: RollingUpdate
   template:
@@ -55,6 +55,11 @@ spec:
         app: apisix-deployment-e2e-test
     spec:
       terminationGracePeriodSeconds: 0
+      initContainers:
+      - name: wait-etcd
+        image: localhost:5000/busybox:dev
+        imagePullPolicy: IfNotPresent
+        command: ['sh', '-c', "until nc -z %s 2379 ; do echo waiting for wait-etcd; sleep 2; done;"]
       containers:
         - livenessProbe:
             failureThreshold: 3
@@ -72,7 +77,7 @@ spec:
             tcpSocket:
               port: 9080
             timeoutSeconds: 2
-          image: "localhost:5000/apache/apisix:dev"
+          image: "localhost:5000/apisix:dev"
           imagePullPolicy: IfNotPresent
           name: apisix-deployment-e2e-test
           ports:
@@ -119,6 +124,10 @@ spec:
       port: 9100
       protocol: TCP
       targetPort: 9100
+    - name: tcp-tls
+      port: 9110
+      protocol: TCP
+      targetPort: 9110
     - name: udp
       port: 9200
       protocol: UDP
@@ -131,20 +140,35 @@ spec:
 `
 )
 
-func (s *Scaffold) newAPISIX() (*corev1.Service, error) {
-	data, err := s.renderConfig(s.opts.APISIXConfigPath)
+type APISIXConfig struct {
+	// Used for template rendering.
+	EtcdServiceFQDN string
+}
+
+func (s *Scaffold) newAPISIXConfigMap(cm *APISIXConfig) error {
+	if cm == nil {
+		return fmt.Errorf("config not allowed to be empty")
+	}
+	data, err := s.renderConfig(s.opts.APISIXConfigPath, cm)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	data = indent(data)
 	configData := fmt.Sprintf(_apisixConfigMap, data)
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, configData); err != nil {
+	if err := s.CreateResourceFromString(configData); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Scaffold) newAPISIX() (*corev1.Service, error) {
+	deployment := fmt.Sprintf(_apisixDeployment, EtcdServiceName)
+	if err := s.CreateResourceFromString(
+		s.FormatRegistry(deployment),
+	); err != nil {
 		return nil, err
 	}
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, _apisixDeployment); err != nil {
-		return nil, err
-	}
-	if err := k8s.KubectlApplyFromStringE(s.t, s.kubectlOptions, _apisixService); err != nil {
+	if err := s.CreateResourceFromString(_apisixService); err != nil {
 		return nil, err
 	}
 

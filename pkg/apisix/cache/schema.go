@@ -42,6 +42,12 @@ var (
 						Indexer:      &memdb.StringFieldIndex{Field: "UpstreamId"},
 						AllowMissing: true,
 					},
+					"plugin_config_id": {
+						Name:         "plugin_config_id",
+						Unique:       false,
+						Indexer:      &memdb.StringFieldIndex{Field: "PluginConfigId"},
+						AllowMissing: true,
+					},
 				},
 			},
 			"upstream": {
@@ -129,6 +135,16 @@ var (
 						Unique:       true,
 						Indexer:      &memdb.StringFieldIndex{Field: "Name"},
 						AllowMissing: true,
+					},
+				},
+			},
+			"upstream_service": {
+				Name: "upstream_service",
+				Indexes: map[string]*memdb.IndexSchema{
+					"id": {
+						Name:    "id",
+						Unique:  true,
+						Indexer: &memdb.StringFieldIndex{Field: "ServiceName"},
 					},
 				},
 			},
